@@ -1,3 +1,23 @@
+/*
+ * Apple A7IOP Mailbox.
+ *
+ * Copyright (c) 2023-2025 Visual Ehrmanntraut (VisualEhrmanntraut).
+ * Copyright (c) 2023-2025 Christian Inci (chris-pcguy).
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 2.1 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this library; if not, see <http://www.gnu.org/licenses/>.
+ */
+
 #include "qemu/osdep.h"
 #include "block/aio.h"
 #include "hw/irq.h"
@@ -14,24 +34,14 @@
 #include "qemu/log.h"
 #include "qemu/queue.h"
 
-#define MAX_MESSAGE_COUNT 15
+#define MAX_MESSAGE_COUNT (15)
 
-#define CTRL_ENABLE_SHIFT 0
-#define CTRL_ENABLE_MASK BIT(CTRL_ENABLE_SHIFT)
-#define CTRL_ENABLE(v) (((v) << CTRL_ENABLE_SHIFT) & CTRL_ENABLE_MASK)
-#define CTRL_FULL_SHIFT 16
-#define CTRL_FULL_MASK BIT(CTRL_FULL_SHIFT)
-#define CTRL_FULL(v) (((v) << CTRL_FULL_SHIFT) & CTRL_FULL_MASK)
-#define CTRL_EMPTY_SHIFT 17
-#define CTRL_EMPTY_MASK BIT(CTRL_EMPTY_SHIFT)
-#define CTRL_EMPTY(v) (((v) << CTRL_EMPTY_SHIFT) & CTRL_EMPTY_MASK)
-#define CTRL_OVERFLOW_SHIFT 18
-#define CTRL_OVERFLOW_MASK BIT(CTRL_OVERFLOW_SHIFT)
-#define CTRL_OVERFLOW(v) (((v) << CTRL_OVERFLOW_SHIFT) & CTRL_OVERFLOW_MASK)
-#define CTRL_UNDERFLOW_SHIFT 19
-#define CTRL_UNDERFLOW_MASK BIT(CTRL_UNDERFLOW_SHIFT)
-#define CTRL_UNDERFLOW(v) (((v) << CTRL_UNDERFLOW_SHIFT) & CTRL_UNDERFLOW_MASK)
-#define CTRL_COUNT_SHIFT 20
+#define CTRL_ENABLE BIT(0)
+#define CTRL_FULL BIT(16)
+#define CTRL_EMPTY BIT(17)
+#define CTRL_OVERFLOW BIT(18)
+#define CTRL_UNDERFLOW BIT(19)
+#define CTRL_COUNT_SHIFT (20)
 #define CTRL_COUNT_MASK (MAX_MESSAGE_COUNT << CTRL_COUNT_SHIFT)
 #define CTRL_COUNT(v) (((v) << CTRL_COUNT_SHIFT) & CTRL_COUNT_MASK)
 
@@ -39,15 +49,6 @@
 #define IOP_NONEMPTY BIT(4)
 #define AP_EMPTY BIT(8)
 #define AP_NONEMPTY BIT(12)
-
-#if 0
-bool is_interrupt_enabled(AppleA7IOPMailbox *s, uint32_t status);
-
-static gint g_uint_cmp(gconstpointer a, gconstpointer b)
-{
-    return a - b;
-}
-#endif
 
 static bool is_interrupt_enabled(AppleA7IOPMailbox *s, uint32_t status)
 {
@@ -67,13 +68,14 @@ static bool is_interrupt_enabled(AppleA7IOPMailbox *s, uint32_t status)
 
 static bool apple_mbox_interrupt_status_empty(AppleA7IOPMailbox *s)
 {
-    // return QTAILQ_EMPTY(&s->interrupt_status);
-    AppleA7IOPInterruptStatusMessage *msg = NULL;
+    AppleA7IOPInterruptStatusMessage *msg;
+
     QTAILQ_FOREACH (msg, &s->interrupt_status, entry) {
         if (is_interrupt_enabled(s, msg->status)) {
             return false;
         }
     }
+
     return true;
 }
 
@@ -97,7 +99,6 @@ static inline bool ap_nonempty_is_unmasked(uint32_t int_mask)
     return (int_mask & AP_NONEMPTY) == 0;
 }
 
-// static
 void apple_a7iop_mailbox_update_irq_status(AppleA7IOPMailbox *s)
 {
     bool iop_empty;
@@ -142,30 +143,10 @@ void apple_a7iop_mailbox_update_irq(AppleA7IOPMailbox *s)
 {
     apple_a7iop_mailbox_update_irq_status(s);
 
-    int iop_irq_raised = 0;
-#if 1
-    iop_irq_raised |= s->iop_nonempty;
-    iop_irq_raised |= s->iop_empty;
-    iop_irq_raised |= s->ap_nonempty;
-    iop_irq_raised |= s->ap_empty;
-#endif
-    iop_irq_raised |= !apple_mbox_interrupt_status_empty(s);
-    if (!strncmp(s->role, "SEP", 3)) {
-        if (iop_irq_raised) {
-            // fprintf(stderr, "apple_a7iop_mailbox_update_irq: role: %s: before
-            // qemu_set_irq: s->iop_irq=%p; set==%u; cond0==%u; cond1==%u;
-            // cond2==%u; cond3==%u; cond4==%u\n", s->role, s->iop_irq,
-            // iop_irq_raised, s->iop_nonempty, s->iop_empty, s->ap_nonempty,
-            // s->ap_empty, !apple_mbox_interrupt_status_empty(s));
-        }
-        if (s->iop_irq) {
-            // if (!strncmp(s->role, "SEP", 3))
-            if (!strcmp(s->role, "SEP-iop"))
-            // if (!strcmp(s->role, "SEP-ap"))
-            {
-                qemu_set_irq(s->iop_irq, iop_irq_raised);
-            }
-        }
+    bool iop_irq_raised = s->iop_nonempty || s->iop_empty || s->ap_nonempty ||
+                          s->ap_empty || !apple_mbox_interrupt_status_empty(s);
+    if (!strcmp(s->role, "SEP-iop")) {
+        qemu_set_irq(s->iop_irq, iop_irq_raised);
     }
     smp_mb();
     if (!strcmp(s->role, "SEP-ap")) {
@@ -176,10 +157,8 @@ void apple_a7iop_mailbox_update_irq(AppleA7IOPMailbox *s)
 bool apple_a7iop_mailbox_is_empty(AppleA7IOPMailbox *s)
 {
     QEMU_LOCK_GUARD(&s->lock);
-    if (s->underflow) {
-        return true;
-    }
-    return QTAILQ_EMPTY(&s->inbox);
+
+    return s->underflow || QTAILQ_EMPTY(&s->inbox);
 }
 
 static void apple_a7iop_mailbox_send(AppleA7IOPMailbox *s,
@@ -188,8 +167,10 @@ static void apple_a7iop_mailbox_send(AppleA7IOPMailbox *s,
     g_assert_nonnull(msg);
 
     QEMU_LOCK_GUARD(&s->lock);
+
     trace_apple_a7iop_mailbox_send(s->role, ldq_le_p(msg->data),
                                    ldq_le_p(msg->data + sizeof(uint64_t)));
+
     QTAILQ_INSERT_TAIL(&s->inbox, msg, next);
     s->count++;
     apple_a7iop_mailbox_update_irq(s);
@@ -237,8 +218,7 @@ void apple_a7iop_mailbox_send_iop(AppleA7IOPMailbox *s, AppleA7IOPMessage *msg)
 
 AppleA7IOPMessage *apple_a7iop_inbox_peek(AppleA7IOPMailbox *s)
 {
-    AppleA7IOPMessage *msg = QTAILQ_FIRST(&s->inbox);
-    return msg;
+    return QTAILQ_FIRST(&s->inbox);
 }
 
 static AppleA7IOPMessage *apple_a7iop_mailbox_recv(AppleA7IOPMailbox *s)
@@ -259,12 +239,14 @@ static AppleA7IOPMessage *apple_a7iop_mailbox_recv(AppleA7IOPMailbox *s)
         apple_a7iop_mailbox_update_irq(s);
         return NULL;
     }
+
     QTAILQ_REMOVE(&s->inbox, msg, next);
     stl_le_p(msg->data + 0xC, ldl_le_p(msg->data + 0xC) | CTRL_COUNT(s->count));
     trace_apple_a7iop_mailbox_recv(s->role, ldq_le_p(msg->data),
                                    ldq_le_p(msg->data + sizeof(uint64_t)));
     s->count--;
     apple_a7iop_mailbox_update_irq(s);
+
     return msg;
 }
 
@@ -340,11 +322,11 @@ void apple_a7iop_mailbox_clear_int_mask(AppleA7IOPMailbox *s, uint32_t value)
 static inline uint32_t apple_a7iop_mailbox_ctrl(AppleA7IOPMailbox *s)
 {
     if (s->underflow) {
-        return CTRL_UNDERFLOW(s->underflow);
+        return CTRL_UNDERFLOW;
     }
 
-    return CTRL_FULL(s->count >= MAX_MESSAGE_COUNT) |
-           CTRL_EMPTY(QTAILQ_EMPTY(&s->inbox)) |
+    return (s->count >= MAX_MESSAGE_COUNT ? CTRL_FULL : 0) |
+           (QTAILQ_EMPTY(&s->inbox) ? CTRL_EMPTY : 0) |
            CTRL_COUNT(MIN(s->count, MAX_MESSAGE_COUNT));
 }
 
@@ -352,7 +334,7 @@ uint32_t apple_a7iop_mailbox_get_iop_ctrl(AppleA7IOPMailbox *s)
 {
     QEMU_LOCK_GUARD(&s->lock);
 
-    return CTRL_ENABLE(s->iop_dir_en) |
+    return (s->iop_dir_en ? CTRL_ENABLE : 0) |
            apple_a7iop_mailbox_ctrl(s->iop_mailbox);
 }
 
@@ -360,21 +342,22 @@ void apple_a7iop_mailbox_set_iop_ctrl(AppleA7IOPMailbox *s, uint32_t value)
 {
     QEMU_LOCK_GUARD(&s->lock);
 
-    s->iop_dir_en = (value & CTRL_ENABLE_MASK) != 0;
+    s->iop_dir_en = (value & CTRL_ENABLE) != 0;
 }
 
 uint32_t apple_a7iop_mailbox_get_ap_ctrl(AppleA7IOPMailbox *s)
 {
     QEMU_LOCK_GUARD(&s->lock);
 
-    return CTRL_ENABLE(s->ap_dir_en) | apple_a7iop_mailbox_ctrl(s->ap_mailbox);
+    return (s->ap_dir_en ? CTRL_ENABLE : 0) |
+           apple_a7iop_mailbox_ctrl(s->ap_mailbox);
 }
 
 void apple_a7iop_mailbox_set_ap_ctrl(AppleA7IOPMailbox *s, uint32_t value)
 {
     QEMU_LOCK_GUARD(&s->lock);
 
-    s->ap_dir_en = (value & CTRL_ENABLE_MASK) != 0;
+    s->ap_dir_en = (value & CTRL_ENABLE) != 0;
 }
 
 void apple_a7iop_interrupt_status_push(AppleA7IOPMailbox *s, uint32_t status)
@@ -405,22 +388,15 @@ uint32_t apple_a7iop_interrupt_status_pop(AppleA7IOPMailbox *s)
             }
         }
     }
+
     if (lowest_msg) {
         QTAILQ_REMOVE(&s->interrupt_status, lowest_msg, entry);
         ret = lowest_msg->status;
         g_free(lowest_msg);
     }
-    // ap_update_irq(s);
-    // iop_update_irq(s);
+
     apple_a7iop_mailbox_update_irq(s);
-#if 0
-    if (ret) {
-        qemu_log_mask(
-            LOG_GUEST_ERROR,
-            "%s: apple_a7iop_interrupt_status_pop: msg==%s: status=0x%05x\n",
-            s->role, (msg != NULL) ? "True" : "False", ret);
-    }
-#endif
+
     return ret;
 }
 
@@ -450,12 +426,7 @@ AppleA7IOPMailbox *apple_a7iop_mailbox_new(const char *role,
     for (i = 0; i < APPLE_A7IOP_IRQ_MAX; i++) {
         sysbus_init_irq(sbd, s->irqs + i);
     }
-    s->iop_irq = NULL;
-    if (!strcmp(s->role, "SEP-iop"))
-    // if (!strncmp(s->role, "SEP", 3))
-    {
-        qdev_init_gpio_out_named(dev, &s->iop_irq, APPLE_A7IOP_IOP_IRQ, 1);
-    }
+    qdev_init_gpio_out_named(dev, &s->iop_irq, APPLE_A7IOP_IOP_IRQ, 1);
     snprintf(name, sizeof(name), TYPE_APPLE_A7IOP_MAILBOX ".%s.regs", s->role);
     switch (version) {
     case APPLE_A7IOP_V2:

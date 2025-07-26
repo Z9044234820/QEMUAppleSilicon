@@ -1,6 +1,23 @@
+/*
+ * Apple A7IOP V4 Mailbox Registers.
+ *
+ * Copyright (c) 2023-2025 Visual Ehrmanntraut (VisualEhrmanntraut).
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 2.1 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this library; if not, see <http://www.gnu.org/licenses/>.
+ */
+
 #include "qemu/osdep.h"
-#include "exec/address-spaces.h"
-#include "qapi/error.h"
 #include "qemu/lockable.h"
 #include "qemu/log.h"
 #include "private.h"
@@ -23,26 +40,26 @@
 #endif
 
 
-#define REG_INT_MASK_SET 0x000
-#define REG_INT_MASK_CLR 0x004
-#define REG_IOP_CTRL 0x008
-#define REG_AP_CTRL 0x00C
-#define REG_IOP_SEND0 0x700
-#define REG_IOP_SEND1 0x704
-#define REG_IOP_SEND2 0x708
-#define REG_IOP_SEND3 0x70C
-#define REG_IOP_RECV0 0x710
-#define REG_IOP_RECV1 0x714
-#define REG_IOP_RECV2 0x718
-#define REG_IOP_RECV3 0x71C
-#define REG_AP_SEND0 0x720
-#define REG_AP_SEND1 0x724
-#define REG_AP_SEND2 0x728
-#define REG_AP_SEND3 0x72C
-#define REG_AP_RECV0 0x730
-#define REG_AP_RECV1 0x734
-#define REG_AP_RECV2 0x738
-#define REG_AP_RECV3 0x73C
+#define REG_INT_MASK_SET (0x0)
+#define REG_INT_MASK_CLR (0x4)
+#define REG_IOP_CTRL (0x8)
+#define REG_AP_CTRL (0xC)
+#define REG_IOP_SEND0 (0x700)
+#define REG_IOP_SEND1 (0x704)
+#define REG_IOP_SEND2 (0x708)
+#define REG_IOP_SEND3 (0x70C)
+#define REG_IOP_RECV0 (0x710)
+#define REG_IOP_RECV1 (0x714)
+#define REG_IOP_RECV2 (0x718)
+#define REG_IOP_RECV3 (0x71C)
+#define REG_AP_SEND0 (0x720)
+#define REG_AP_SEND1 (0x724)
+#define REG_AP_SEND2 (0x728)
+#define REG_AP_SEND3 (0x72C)
+#define REG_AP_RECV0 (0x730)
+#define REG_AP_RECV1 (0x734)
+#define REG_AP_RECV2 (0x738)
+#define REG_AP_RECV3 (0x73C)
 
 static void apple_a7iop_mailbox_reg_write_v4(void *opaque, hwaddr addr,
                                              const uint64_t data, unsigned size)

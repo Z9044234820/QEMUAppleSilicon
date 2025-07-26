@@ -2876,7 +2876,7 @@ static void t8030_machine_init(MachineState *machine)
     dtb_set_prop_str(child, "graphics-featureset-class", "");
     dtb_set_prop_str(child, "graphics-featureset-fallbacks", "");
     // TODO: PMP
-    dtb_set_prop_str(t8030_machine->device_tree, "target-type", "sim");
+    dtb_set_prop_str(t8030_machine->device_tree, "target-type", "fastsim");
     dtb_set_prop_u32(child, "device-color-policy", 0);
 
     t8030_cpu_setup(t8030_machine);

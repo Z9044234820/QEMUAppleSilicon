@@ -22,31 +22,26 @@
 #include "crypto/cipher.h"
 #include "crypto/random.h"
 #include "exec/address-spaces.h"
+#include "exec/tb-flush.h"
 #include "hw/arm/apple-silicon/a13.h"
 #include "hw/arm/apple-silicon/a9.h"
 #include "hw/arm/apple-silicon/sep.h"
 #include "hw/boards.h"
-#include "hw/core/cpu.h"
 #include "hw/gpio/apple_gpio.h"
 #include "hw/i2c/apple_i2c.h"
 #include "hw/irq.h"
-#include "hw/misc/apple-silicon/a7iop/core.h"
 #include "hw/misc/apple-silicon/a7iop/private.h"
-#include "hw/misc/unimp.h"
 #include "hw/nvram/eeprom_at24c.h"
 #include "hw/or-irq.h"
 #include "hw/qdev-properties-system.h"
-#include "hw/qdev-properties.h"
-#include "hw/resettable.h"
 #include "qapi/error.h"
 #include "qemu/cutils.h"
+#include "qemu/guest-random.h"
 #include "qemu/log.h"
 #include "qemu/units.h"
-#include "qom/object.h"
 #include "nettle/ccm.h"
 #include "nettle/cmac.h"
 #include "nettle/ecc-curve.h"
-#include "nettle/ecc.h"
 #include "nettle/ecdsa.h"
 #include "nettle/hkdf.h"
 #include "nettle/hmac.h"
@@ -446,7 +441,7 @@ static void debug_trace_reg_write(void *opaque, hwaddr addr, uint64_t data,
         qemu_log_mask(
             LOG_UNIMP,
             "DEBUG_TRACE: SHMBUF_BASE==NULL: Unknown write at 0x" HWADDR_FMT_plx
-            " of value 0x%" PRIx64 " size=%u\n",
+            " of value 0x%" PRIX64 " size=%u\n",
             addr, data, size);
         return;
     }
@@ -467,7 +462,7 @@ static void debug_trace_reg_write(void *opaque, hwaddr addr, uint64_t data,
         addr_mod != 0x30) {
         qemu_log_mask(LOG_UNIMP,
                       "DEBUG_TRACE: Unknown write at 0x" HWADDR_FMT_plx
-                      " of value 0x%" PRIx64 " size=%u offset==0x%08x\n",
+                      " of value 0x%" PRIX64 " size=%u offset==0x%08x\n",
                       addr, data, size, offset);
     }
 
@@ -486,8 +481,8 @@ static void debug_trace_reg_write(void *opaque, hwaddr addr, uint64_t data,
     uint64_t tid = *(uint64_t *)&s->debug_trace_regs[addr - 0x08];
     uint64_t time = *(uint64_t *)&s->debug_trace_regs[addr - 0x00];
     DPRINTF("\nDEBUG_TRACE: Debug:"
-            " 0x%" PRIx64 " 0x%" PRIx64 " 0x%" PRIx64 " 0x%" PRIx64
-            " 0x%" PRIx64 " 0x%" PRIx64 " %" PRIu64 "\n",
+            " 0x%" PRIX64 " 0x%" PRIX64 " 0x%" PRIX64 " 0x%" PRIX64
+            " 0x%" PRIX64 " 0x%" PRIX64 " %" PRIu64 "\n",
             trace_id, arg2, arg3, arg4, arg5, tid, time);
     const char *tid_str = sepos_return_module_thread_string(s->chip_id, tid);
     switch (trace_id) {
@@ -495,213 +490,213 @@ static void debug_trace_reg_write(void *opaque, hwaddr addr, uint64_t data,
         // %s instead of %c%c%c%c because the names will be nullbytes sometimes.
         uint64_t old_taskname = bswap32(arg2);
         uint64_t new_taskname = bswap32(arg4);
-        DPRINTF("DEBUG_TRACE: Description: tid: 0x%05" PRIx64 "/%s: SEP "
-                "L4 task switch: old task thread name: 0x%02" PRIx64
-                "(%s) old task id: 0x%05" PRIx64
-                " new task thread name: 0x%02" PRIx64 "(%s) "
-                "arg5: 0x%02" PRIx64 "\n",
+        DPRINTF("DEBUG_TRACE: Description: tid: 0x%05" PRIX64 "/%s: SEP "
+                "L4 task switch: old task thread name: 0x%02" PRIX64
+                "(%s) old task id: 0x%05" PRIX64
+                " new task thread name: 0x%02" PRIX64 "(%s) "
+                "arg5: 0x%02" PRIX64 "\n",
                 tid, tid_str, arg2, (char *)&old_taskname, arg3, arg4,
                 (char *)&new_taskname, arg5);
         break;
     }
     case 0x82010004: // panic
-        DPRINTF("DEBUG_TRACE: Description: tid: 0x%05" PRIx64 "/%s: SEP "
+        DPRINTF("DEBUG_TRACE: Description: tid: 0x%05" PRIX64 "/%s: SEP "
                 "module panicked\n",
                 tid, tid_str);
         break;
     case 0x82030004: // initialize_ool_page
-        DPRINTF("DEBUG_TRACE: Description: tid: 0x%05" PRIx64 "/%s: "
+        DPRINTF("DEBUG_TRACE: Description: tid: 0x%05" PRIX64 "/%s: "
                 "initialize_ool_page:"
-                " obj_id: 0x%02" PRIx64 " address: 0x%02" PRIx64 "\n",
+                " obj_id: 0x%02" PRIX64 " address: 0x%02" PRIX64 "\n",
                 tid, tid_str, arg2, arg3);
         break;
     case 0x82040005: // before SEP_IO__Control
     case 0x82040006: // after SEP_IO__Control
-        DPRINTF("DEBUG_TRACE: Description: tid: 0x%05" PRIx64 "/%s: %s "
+        DPRINTF("DEBUG_TRACE: Description: tid: 0x%05" PRIX64 "/%s: %s "
                 "SEP_IO__Control Sending message to other module:"
-                " fromto: 0x%02" PRIx64 " method: 0x%02" PRIx64
-                " data0: 0x%02" PRIx64 " "
-                "data1: 0x%02" PRIx64 "\n",
+                " fromto: 0x%02" PRIX64 " method: 0x%02" PRIX64
+                " data0: 0x%02" PRIX64 " "
+                "data1: 0x%02" PRIX64 "\n",
                 tid, tid_str, (trace_id == 0x82040005) ? "Before" : "After",
                 arg2, arg3, arg4, arg5);
         break;
     case 0x82050005: // SEP_SERVICE__Call: request
-        DPRINTF("DEBUG_TRACE: Description: tid: 0x%05" PRIx64 "/%s: "
+        DPRINTF("DEBUG_TRACE: Description: tid: 0x%05" PRIX64 "/%s: "
                 "SEP_SERVICE__Call: request:"
-                " fromto: 0x%02" PRIx64 " interface_msgid: 0x%02" PRIx64 " "
-                "method: 0x%02" PRIx64 " data0: 0x%02" PRIx64 "\n",
+                " fromto: 0x%02" PRIX64 " interface_msgid: 0x%02" PRIX64 " "
+                "method: 0x%02" PRIX64 " data0: 0x%02" PRIX64 "\n",
                 tid, tid_str, arg2, arg3, arg4, arg5);
         break;
     case 0x82050006: // SEP_SERVICE__Call: response
-        DPRINTF("DEBUG_TRACE: Description: tid: 0x%05" PRIx64 "/%s: "
+        DPRINTF("DEBUG_TRACE: Description: tid: 0x%05" PRIX64 "/%s: "
                 "SEP_SERVICE__Call: response:"
-                " fromto: 0x%02" PRIx64 " interface_msgid: 0x%02" PRIx64 " "
-                "method: 0x%02" PRIx64 " status/data0: 0x%02" PRIx64 "\n",
+                " fromto: 0x%02" PRIX64 " interface_msgid: 0x%02" PRIX64 " "
+                "method: 0x%02" PRIX64 " status/data0: 0x%02" PRIX64 "\n",
                 tid, tid_str, arg2, arg3, arg4, arg5);
         break;
     case 0x82060004: // entered workloop function
-        DPRINTF("DEBUG_TRACE: Description: tid: 0x%05" PRIx64 "/%s: SEP "
+        DPRINTF("DEBUG_TRACE: Description: tid: 0x%05" PRIX64 "/%s: SEP "
                 "module entered workloop function:"
-                " handlers0: 0x%02" PRIx64 " handlers1: 0x%02" PRIx64 " arg5: "
-                "0x%02" PRIx64 " arg6: 0x%02" PRIx64 "\n",
+                " handlers0: 0x%02" PRIX64 " handlers1: 0x%02" PRIX64 " arg5: "
+                "0x%02" PRIX64 " arg6: 0x%02" PRIX64 "\n",
                 tid, tid_str, arg2, arg3, arg4, arg5);
         break;
     case 0x82060010: // workloop function: interface_msgid==0xfffe after
                      // receiving
-        DPRINTF("DEBUG_TRACE: Description: tid: 0x%05" PRIx64 "/%s: SEP "
+        DPRINTF("DEBUG_TRACE: Description: tid: 0x%05" PRIX64 "/%s: SEP "
                 "module workloop function:"
                 " interface_msgid==0xfffe after receiving: "
-                "data0: 0x%02" PRIx64 "\n",
+                "data0: 0x%02" PRIX64 "\n",
                 tid, tid_str, arg2);
         break;
     case 0x82060014: // workloop function: before handlers0 handler
-        DPRINTF("DEBUG_TRACE: Description: tid: 0x%05" PRIx64 "/%s: SEP module "
+        DPRINTF("DEBUG_TRACE: Description: tid: 0x%05" PRIX64 "/%s: SEP module "
                 "workloop function: before handlers0 handler:"
-                " handler_index: 0x%02" PRIx64 " data0: 0x%02" PRIx64
-                " data1: 0x%02" PRIx64 " "
-                "data2: 0x%02" PRIx64 "\n",
+                " handler_index: 0x%02" PRIX64 " data0: 0x%02" PRIX64
+                " data1: 0x%02" PRIX64 " "
+                "data2: 0x%02" PRIX64 "\n",
                 tid, tid_str, arg2, arg3, arg4, arg5);
         break;
     case 0x82060018: // workloop function: handlers0: handler not found,
                      // panic
         DPRINTF(
 
-            "DEBUG_TRACE: Description: tid: 0x%05" PRIx64 "/%s: SEP module "
+            "DEBUG_TRACE: Description: tid: 0x%05" PRIX64 "/%s: SEP module "
             "workloop function: handlers0: handler not found, panic:"
-            " interface_msgid: 0x%02" PRIx64 " method: 0x%02" PRIx64 " data0: "
-            "0x%02" PRIx64 " "
-            "data1: 0x%02" PRIx64 "\n",
+            " interface_msgid: 0x%02" PRIX64 " method: 0x%02" PRIX64 " data0: "
+            "0x%02" PRIX64 " "
+            "data1: 0x%02" PRIX64 "\n",
             tid, tid_str, arg2, arg3, arg4, arg5);
         break;
     case 0x8206001C: // workloop function: interface_msgid==0xFFFE
                      // before handler
-        DPRINTF("DEBUG_TRACE: Description: tid: 0x%05" PRIx64 "/%s: SEP "
+        DPRINTF("DEBUG_TRACE: Description: tid: 0x%05" PRIX64 "/%s: SEP "
                 "module workloop function:"
                 " interface_msgid==0xfffe before handler: data0: "
-                "0x%02" PRIx64 " handler: 0x%02" PRIx64 "\n",
+                "0x%02" PRIX64 " handler: 0x%02" PRIX64 "\n",
                 tid, tid_str, arg2, arg3);
         break;
     case 0x82080005: // 0x82080005==before Rpc_Call
     case 0x82080006: // 0x82080006==after Rpc_Call
-        DPRINTF("DEBUG_TRACE: Description: tid: 0x%05" PRIx64 "/%s: %s "
+        DPRINTF("DEBUG_TRACE: Description: tid: 0x%05" PRIX64 "/%s: %s "
                 "Rpc_Call Sending message to other module:"
-                " fromto: 0x%02" PRIx64 " interface_msgid: 0x%02" PRIx64
+                " fromto: 0x%02" PRIX64 " interface_msgid: 0x%02" PRIX64
                 " ool: "
-                "0x%02" PRIx64 " method: 0x%02" PRIx64 "\n",
+                "0x%02" PRIX64 " method: 0x%02" PRIX64 "\n",
                 tid, tid_str, (trace_id == 0x82080005) ? "Before" : "After",
                 arg2, arg3, arg4, arg5);
         break;
     case 0x8208000D: // before Rpc_Wait
-        DPRINTF("DEBUG_TRACE: Description: tid: 0x%05" PRIx64 "/%s: Before "
+        DPRINTF("DEBUG_TRACE: Description: tid: 0x%05" PRIX64 "/%s: Before "
                 "Rpc_Wait Receiving message from other module\n",
                 tid, tid_str);
         break;
     case 0x8208000E: // after Rpc_Wait
-        DPRINTF("DEBUG_TRACE: Description: tid: 0x%05" PRIx64 "/%s: After "
+        DPRINTF("DEBUG_TRACE: Description: tid: 0x%05" PRIX64 "/%s: After "
                 "Rpc_Wait "
                 "Receiving message from other module:"
-                " fromto: 0x%02" PRIx64 " interface_msgid: 0x%02" PRIx64
-                " ool: 0x%02" PRIx64 " "
-                "method: 0x%02" PRIx64 "\n",
+                " fromto: 0x%02" PRIX64 " interface_msgid: 0x%02" PRIX64
+                " ool: 0x%02" PRIX64 " "
+                "method: 0x%02" PRIX64 "\n",
                 tid, tid_str, arg2, arg3, arg4, arg5);
         break;
     case 0x82080019: // before Rpc_WaitFrom
-        DPRINTF("DEBUG_TRACE: Description: tid: 0x%05" PRIx64 "/%s: Before "
+        DPRINTF("DEBUG_TRACE: Description: tid: 0x%05" PRIX64 "/%s: Before "
                 "Rpc_WaitFrom Receiving message from other module:"
-                " arg2: 0x%02" PRIx64 "\n",
+                " arg2: 0x%02" PRIX64 "\n",
                 tid, tid_str, arg2);
         break;
     case 0x8208001A: // after Rpc_WaitFrom
-        DPRINTF("DEBUG_TRACE: Description: tid: 0x%05" PRIx64 "/%s: After "
+        DPRINTF("DEBUG_TRACE: Description: tid: 0x%05" PRIX64 "/%s: After "
                 "Rpc_WaitFrom Receiving message from other module:"
-                " fromto: 0x%02" PRIx64 " interface_msgid: 0x%02" PRIx64
-                " ool: 0x%02" PRIx64 " "
-                "method: 0x%02" PRIx64 "\n",
+                " fromto: 0x%02" PRIX64 " interface_msgid: 0x%02" PRIX64
+                " ool: 0x%02" PRIX64 " "
+                "method: 0x%02" PRIX64 "\n",
                 tid, tid_str, arg2, arg3, arg4, arg5);
         break;
     case 0x82080011: // before Rpc_ReturnWait
     case 0x82080012: // after Rpc_ReturnWait
-        DPRINTF("DEBUG_TRACE: Description: tid: 0x%05" PRIx64 "/%s: %s "
+        DPRINTF("DEBUG_TRACE: Description: tid: 0x%05" PRIX64 "/%s: %s "
                 "Rpc_ReturnWait Receiving message from other module:"
-                " fromto: 0x%02" PRIx64 " interface_msgid: 0x%02" PRIx64
-                " ool: 0x%02" PRIx64 " "
-                "method: 0x%02" PRIx64 "\n",
+                " fromto: 0x%02" PRIX64 " interface_msgid: 0x%02" PRIX64
+                " ool: 0x%02" PRIX64 " "
+                "method: 0x%02" PRIX64 "\n",
                 tid, tid_str, (trace_id == 0x82080011) ? "Before" : "After",
                 arg2, arg3, arg4, arg5);
         break;
     case 0x82080014: // before Rpc_Return return response
-        DPRINTF("DEBUG_TRACE: Description: tid: 0x%05" PRIx64 "/%s: "
+        DPRINTF("DEBUG_TRACE: Description: tid: 0x%05" PRIX64 "/%s: "
                 "Before Rpc_Return return response:"
-                " fromto: 0x%02" PRIx64 " interface_msgid: 0x%02" PRIx64
+                " fromto: 0x%02" PRIX64 " interface_msgid: 0x%02" PRIX64
                 " ool: "
-                "0x%02" PRIx64 " method: 0x%02" PRIx64 "\n",
+                "0x%02" PRIX64 " method: 0x%02" PRIX64 "\n",
                 tid, tid_str, arg2, arg3, arg4, arg5);
         break;
     case 0x8208001D: // before Rpc_WaitNotify
-        DPRINTF("DEBUG_TRACE: Description: tid: 0x%05" PRIx64 "/%s: Before "
+        DPRINTF("DEBUG_TRACE: Description: tid: 0x%05" PRIX64 "/%s: Before "
                 "Rpc_WaitNotify:"
                 " Rpc_WaitNotify_arg2 != 0: Rpc_WaitNotify_arg1: "
-                "0x%02" PRIx64 "\n",
+                "0x%02" PRIX64 "\n",
                 tid, tid_str, arg2);
         break;
     case 0x8208001e: // after Rpc_WaitNotify
-        DPRINTF("DEBUG_TRACE: Description: tid: 0x%05" PRIx64 "/%s: "
+        DPRINTF("DEBUG_TRACE: Description: tid: 0x%05" PRIX64 "/%s: "
                 "After Rpc_WaitNotify:"
                 " svc_0x5_0_func_arg2 != 0: svc_0x5_0_func_arg1: "
-                "0x%02" PRIx64 " L4_MR0: 0x%02" PRIx64 "\n",
+                "0x%02" PRIX64 " L4_MR0: 0x%02" PRIX64 "\n",
                 tid, tid_str, arg2, arg3);
         break;
     case 0x82140004: // _dispatch_thread_main__intr/SEPD interrupt
-        DPRINTF("DEBUG_TRACE: Description: tid: 0x%05" PRIx64 "/%s: "
+        DPRINTF("DEBUG_TRACE: Description: tid: 0x%05" PRIX64 "/%s: "
                 "_dispatch_thread_main__intr/SEPD interrupt "
-                "trace_id 0x%02" PRIx64 ":"
-                " arg2: 0x%02" PRIx64 " arg3: 0x%02" PRIx64
-                " arg4: 0x%02" PRIx64 " "
-                "arg5: 0x%02" PRIx64 "\n",
+                "trace_id 0x%02" PRIX64 ":"
+                " arg2: 0x%02" PRIX64 " arg3: 0x%02" PRIX64
+                " arg4: 0x%02" PRIX64 " "
+                "arg5: 0x%02" PRIX64 "\n",
                 tid, tid_str, trace_id, arg2, arg3, arg4, arg5);
         break;
     case 0x82140014: // SEP_Driver__Close
-        DPRINTF("DEBUG_TRACE: Description: tid: 0x%05" PRIx64 "/%s: "
+        DPRINTF("DEBUG_TRACE: Description: tid: 0x%05" PRIX64 "/%s: "
                 "SEP_Driver__Close:"
-                " module_name_int: 0x%02" PRIx64 " fromto: 0x%02" PRIx64 " "
-                "response_data0: 0x%02" PRIx64 "\n",
+                " module_name_int: 0x%02" PRIX64 " fromto: 0x%02" PRIX64 " "
+                "response_data0: 0x%02" PRIX64 "\n",
                 tid, tid_str, arg2, arg3, arg5);
         break;
     case 0x82140024: // *_enable_powersave_arg2/SEP_Driver__SetPowerState
-        DPRINTF("DEBUG_TRACE: Description: tid: 0x%05" PRIx64 "/%s: "
+        DPRINTF("DEBUG_TRACE: Description: tid: 0x%05" PRIX64 "/%s: "
                 "SEP_Driver__SetPowerState:"
-                " function called: enable_powersave?: 0x%02" PRIx64 " "
-                "is_powersave_enabled: 0x%02" PRIx64 " field_cc3: 0x%02" PRIx64
+                " function called: enable_powersave?: 0x%02" PRIX64 " "
+                "is_powersave_enabled: 0x%02" PRIX64 " field_cc3: 0x%02" PRIX64
                 "\n",
                 tid, tid_str, arg2, arg3, arg4);
         break;
     case 0x82140031: // SEPD_thread_handler:
                      // SEP_Driver__before_InterruptAsync
-        DPRINTF("DEBUG_TRACE: Description: tid: 0x%05" PRIx64 "/%s: "
+        DPRINTF("DEBUG_TRACE: Description: tid: 0x%05" PRIX64 "/%s: "
                 "SEPD_thread_handler: before_InterruptAsync:"
-                " arg2: 0x%02" PRIx64 "\n",
+                " arg2: 0x%02" PRIX64 "\n",
                 tid, tid_str, arg2);
         break;
     case 0x82140032: // SEPD_thread_handler:
                      // SEP_Driver__after_InterruptAsync
-        DPRINTF("DEBUG_TRACE: Description: tid: 0x%05" PRIx64 "/%s: "
+        DPRINTF("DEBUG_TRACE: Description: tid: 0x%05" PRIX64 "/%s: "
                 "SEPD_thread_handler: after_InterruptAsync\n",
                 tid, tid_str);
         break;
     case 0x82140195: // AESS_message_received: before
                      // AESS_keywrap_cmd_0x02
-        DPRINTF("DEBUG_TRACE: Description: tid: 0x%05" PRIx64 "/%s: "
+        DPRINTF("DEBUG_TRACE: Description: tid: 0x%05" PRIX64 "/%s: "
                 "AESS_message_received: before AESS_keywrap_cmd_0x02:"
-                " data0_low: 0x%02" PRIx64 " data0_high: 0x%02" PRIx64
+                " data0_low: 0x%02" PRIX64 " data0_high: 0x%02" PRIX64
                 " data1_low: "
-                "0x%02" PRIx64 " data1_high: 0x%02" PRIx64 "\n",
+                "0x%02" PRIX64 " data1_high: 0x%02" PRIX64 "\n",
                 tid, tid_str, arg2, arg3, arg4, arg5);
         break;
     case 0x82140196: // AESS_message_received: after
                      // AESS_keywrap_cmd_0x02
-        DPRINTF("DEBUG_TRACE: Description: tid: 0x%05" PRIx64 "/%s: "
+        DPRINTF("DEBUG_TRACE: Description: tid: 0x%05" PRIX64 "/%s: "
                 "AESS_message_received: after AESS_keywrap_cmd_0x02:"
-                " status: 0x%02" PRIx64 "\n",
+                " status: 0x%02" PRIX64 "\n",
                 tid, tid_str, arg2);
         break;
     case 0x82140324: // SEP_Driver__Mailbox_Rx
@@ -709,54 +704,54 @@ static void debug_trace_reg_write(void *opaque, hwaddr addr, uint64_t data,
                sizeof(uint32_t));
         memcpy((void *)&m + 0x04, &s->debug_trace_regs[offset + 0x90],
                sizeof(uint32_t));
-        DPRINTF("DEBUG_TRACE: Description: tid: 0x%05" PRIx64 "/%s: "
+        DPRINTF("DEBUG_TRACE: Description: tid: 0x%05" PRIX64 "/%s: "
                 "SEP_Driver__Mailbox_Rx:"
                 " endpoint: 0x%02x tag: 0x%02x opcode: "
                 "0x%02x(%u) param: 0x%02x data: 0x%02x\n",
                 tid, tid_str, m.ep, m.tag, m.op, m.op, m.param, m.data);
         break;
     case 0x82140328: // SEP_Driver__Mailbox_RxMessageQueue
-        DPRINTF("DEBUG_TRACE: Description: tid: 0x%05" PRIx64 "/%s: "
+        DPRINTF("DEBUG_TRACE: Description: tid: 0x%05" PRIX64 "/%s: "
                 "SEP_Driver__Mailbox_RxMessageQueue:"
-                " endpoint: 0x%02" PRIx64 " opcode: 0x%02" PRIx64 " arg4: "
-                "0x%02" PRIx64 " arg5: 0x%02" PRIx64 "\n",
+                " endpoint: 0x%02" PRIX64 " opcode: 0x%02" PRIX64 " arg4: "
+                "0x%02" PRIX64 " arg5: 0x%02" PRIX64 "\n",
                 tid, tid_str, arg2, arg3, arg4, arg5);
         break;
     case 0x82140334: // SEP_Driver__Mailbox_ReadMsgFetch
-        DPRINTF("DEBUG_TRACE: Description: tid: 0x%05" PRIx64 "/%s: "
+        DPRINTF("DEBUG_TRACE: Description: tid: 0x%05" PRIX64 "/%s: "
                 "SEP_Driver__Mailbox_ReadMsgFetch:"
-                " endpoint: 0x%02" PRIx64 " data: 0x%02" PRIx64
-                " data2: 0x%02" PRIx64 " "
-                "read_msg.data[0]: 0x%02" PRIx64 "\n",
+                " endpoint: 0x%02" PRIX64 " data: 0x%02" PRIX64
+                " data2: 0x%02" PRIX64 " "
+                "read_msg.data[0]: 0x%02" PRIX64 "\n",
                 tid, tid_str, arg2, arg3, arg4, arg5);
         break;
     case 0x82140338: // SEP_Driver__Mailbox_ReadBlocked
-        DPRINTF("DEBUG_TRACE: Description: tid: 0x%05" PRIx64 "/%s: "
+        DPRINTF("DEBUG_TRACE: Description: tid: 0x%05" PRIX64 "/%s: "
                 "SEP_Driver__Mailbox_ReadBlocked:"
                 " for_TRNG_ASC0_ASC1_read_0 returned False: "
-                "data0: 0x%02" PRIx64 "\n",
+                "data0: 0x%02" PRIX64 "\n",
                 tid, tid_str, arg2);
         break;
     case 0x8214033C: // SEP_Driver__Mailbox_ReadComplete
-        DPRINTF("DEBUG_TRACE: Description: tid: 0x%05" PRIx64 "/%s: "
+        DPRINTF("DEBUG_TRACE: Description: tid: 0x%05" PRIX64 "/%s: "
                 "SEP_Driver__Mailbox_ReadComplete:"
                 " for_TRNG_ASC0_ASC1_read_0 returned True: "
-                "data0: 0x%02" PRIx64 "\n",
+                "data0: 0x%02" PRIX64 "\n",
                 tid, tid_str, arg2);
         break;
     case 0x82140340: // SEP_Driver__Mailbox_Tx
-        DPRINTF("DEBUG_TRACE: Description: tid: 0x%05" PRIx64 "/%s: "
+        DPRINTF("DEBUG_TRACE: Description: tid: 0x%05" PRIX64 "/%s: "
                 "SEP_Driver__Mailbox_Tx:"
-                " function_13 returned True:  arg2: 0x%02" PRIx64 " "
-                "arg3: 0x%02" PRIx64 " arg4: 0x%02" PRIx64 " arg5: 0x%02" PRIx64
+                " function_13 returned True:  arg2: 0x%02" PRIX64 " "
+                "arg3: 0x%02" PRIX64 " arg4: 0x%02" PRIX64 " arg5: 0x%02" PRIX64
                 "\n",
                 tid, tid_str, arg2, arg3, arg4, arg5);
         break;
     case 0x82140344: // SEP_Driver__Mailbox_TxStall
-        DPRINTF("DEBUG_TRACE: Description: tid: 0x%05" PRIx64 "/%s: "
+        DPRINTF("DEBUG_TRACE: Description: tid: 0x%05" PRIX64 "/%s: "
                 "SEP_Driver__Mailbox_TxStall:"
-                " function_13 returned False: arg2: 0x%02" PRIx64 " "
-                "arg3: 0x%02" PRIx64 " arg4: 0x%02" PRIx64 " arg5: 0x%02" PRIx64
+                " function_13 returned False: arg2: 0x%02" PRIX64 " "
+                "arg3: 0x%02" PRIX64 " arg4: 0x%02" PRIX64 " arg5: 0x%02" PRIX64
                 "\n",
                 tid, tid_str, arg2, arg3, arg4, arg5);
         break;
@@ -764,46 +759,46 @@ static void debug_trace_reg_write(void *opaque, hwaddr addr, uint64_t data,
                      // method_0x4131/Mailbox_OOL_In
     case 0x8214034C: // mod_ASC0_ASC1_function_message_received:
                      // Mailbox_OOL_Out
-        DPRINTF("DEBUG_TRACE: Description: tid: 0x%05" PRIx64 "/%s: SEP "
+        DPRINTF("DEBUG_TRACE: Description: tid: 0x%05" PRIX64 "/%s: SEP "
                 "mod_ASC0_ASC1_function_message_received "
                 "SEP_Driver: Mailbox_OOL_%s:"
-                " arg2: 0x%02" PRIx64 " arg3: 0x%02" PRIx64
-                " arg4: 0x%02" PRIx64 "\n",
+                " arg2: 0x%02" PRIX64 " arg3: 0x%02" PRIX64
+                " arg4: 0x%02" PRIX64 "\n",
                 tid, tid_str, (trace_id == 0x82140348) ? "In" : "Out", arg2,
                 arg3, arg4);
         break;
     case 0x82140360: // SEP_Driver__Mailbox_Wake
-        DPRINTF("DEBUG_TRACE: Description: tid: 0x%05" PRIx64 "/%s: "
+        DPRINTF("DEBUG_TRACE: Description: tid: 0x%05" PRIX64 "/%s: "
                 "SEP_Driver__Mailbox_Wake:"
-                " current value: registers[0x4108]: 0x%08" PRIx64 " "
+                " current value: registers[0x4108]: 0x%08" PRIX64 " "
                 "SEP_message_incoming: %" PRIu64 "\n",
                 tid, tid_str, arg2, arg3);
         break;
     case 0x82140364: // SEP_Driver__Mailbox_NoData
-        DPRINTF("DEBUG_TRACE: Description: tid: 0x%05" PRIx64 "/%s: "
+        DPRINTF("DEBUG_TRACE: Description: tid: 0x%05" PRIX64 "/%s: "
                 "SEP_Driver__Mailbox_NoData:"
-                " current value: registers[0x4108]: 0x%08" PRIx64 "\n",
+                " current value: registers[0x4108]: 0x%08" PRIX64 "\n",
                 tid, tid_str, arg2);
         break;
     case 0x82140964: // PMGR_message_received
-        DPRINTF("DEBUG_TRACE: Description: tid: 0x%05" PRIx64 "/%s: "
+        DPRINTF("DEBUG_TRACE: Description: tid: 0x%05" PRIX64 "/%s: "
                 "PMGR_message_received:"
-                " fromto: 0x%02" PRIx64 " data0: 0x%02" PRIx64
-                " data1: 0x%02" PRIx64 "\n",
+                " fromto: 0x%02" PRIX64 " data0: 0x%02" PRIX64
+                " data1: 0x%02" PRIX64 "\n",
                 tid, tid_str, arg2, arg3, arg4);
         break;
     case 0x82140968: // PMGR_enable_clock
-        DPRINTF("DEBUG_TRACE: Description: tid: 0x%05" PRIx64 "/%s: "
+        DPRINTF("DEBUG_TRACE: Description: tid: 0x%05" PRIX64 "/%s: "
                 "PMGR_enable_clock:"
-                " enable_clock: 0x%02" PRIx64 "\n",
+                " enable_clock: 0x%02" PRIX64 "\n",
                 tid, tid_str, arg2);
         break;
     default: // Unknown trace value
-        DPRINTF("DEBUG_TRACE: Description: tid: 0x%05" PRIx64 "/%s: "
-                "Unknown trace_id 0x%02" PRIx64 ":"
-                " arg2: 0x%02" PRIx64 " arg3: 0x%02" PRIx64
-                " arg4: 0x%02" PRIx64 " "
-                "arg5: 0x%02" PRIx64 "\n",
+        DPRINTF("DEBUG_TRACE: Description: tid: 0x%05" PRIX64 "/%s: "
+                "Unknown trace_id 0x%02" PRIX64 ":"
+                " arg2: 0x%02" PRIX64 " arg3: 0x%02" PRIX64
+                " arg4: 0x%02" PRIX64 " "
+                "arg5: 0x%02" PRIX64 "\n",
                 tid, tid_str, trace_id, arg2, arg3, arg4, arg5);
         break;
     }
@@ -839,7 +834,7 @@ static uint64_t debug_trace_reg_read(void *opaque, hwaddr addr, unsigned size)
     default:
         qemu_log_mask(LOG_UNIMP,
                       "DEBUG_TRACE: Unknown read at 0x" HWADDR_FMT_plx
-                      " size=%u ret==0x%" PRIx64 "\n",
+                      " size=%u ret==0x%" PRIX64 "\n",
                       addr, size, ret);
     jump_default:
         memcpy(&ret, &s->debug_trace_regs[addr], size);
@@ -919,7 +914,7 @@ static void trng_regs_reg_write(void *opaque, hwaddr addr, uint64_t data,
 #if 0
     DPRINTF(
                   "TRNG_REGS: Write at 0x" HWADDR_FMT_plx
-                  " of value 0x%" PRIx64 "\n",
+                  " of value 0x%" PRIX64 "\n",
                   addr, data);
 #endif
 
@@ -945,14 +940,14 @@ static void trng_regs_reg_write(void *opaque, hwaddr addr, uint64_t data,
     case REG_TRNG_STATUS:
         enabled = (s->config & TRNG_CONTROL_ENABLED) != 0;
         if ((data & TRNG_STATUS_READY) != 0 && (s->offset_0x70 & 0xC0) == 0) {
-            qcrypto_random_bytes(s->fifo, sizeof(s->fifo), NULL);
+            qemu_guest_getrandom_nofail(s->fifo, sizeof(s->fifo));
         }
         break;
     case REG_TRNG_CONTROL: {
         uint32_t old_enabled = (s->config & TRNG_CONTROL_ENABLED) != 0;
         s->config = (uint32_t)data;
         DPRINTF("TRNG_REGS: REG_TRNG_CONTROL write at 0x" HWADDR_FMT_plx
-                " of value 0x%" PRIx64 "\n",
+                " of value 0x%" PRIX64 "\n",
                 addr, data);
         enabled = (data & TRNG_CONTROL_ENABLED) != 0;
 
@@ -1024,7 +1019,7 @@ static void trng_regs_reg_write(void *opaque, hwaddr addr, uint64_t data,
 #if 0
         qemu_log_mask(LOG_UNIMP,
                       "TRNG_REGS: Unknown write at 0x" HWADDR_FMT_plx
-                      " of value 0x%" PRIx64 "\n",
+                      " of value 0x%" PRIX64 "\n",
                       addr, data);
 #endif
         break;
@@ -1098,7 +1093,7 @@ static uint64_t trng_regs_reg_read(void *opaque, hwaddr addr, unsigned size)
 #if 0
     DPRINTF(
                   "TRNG_REGS: Read at 0x" HWADDR_FMT_plx
-                  " ret: 0x%" PRIx64 "\n",
+                  " ret: 0x%" PRIX64 "\n",
                   addr, ret);
 #endif
     return ret;
@@ -1163,7 +1158,7 @@ static void pmgr_base_reg_write(void *opaque, hwaddr addr, uint64_t data,
         DPRINTF(
 
             "SEP PMGR_BASE: PowerState %s write before at 0x" HWADDR_FMT_plx
-            " with value 0x%" PRIx64 "\n",
+            " with value 0x%" PRIX64 "\n",
             sepos_powerstate_name(addr), addr, data);
         /*
             LIKE AP PMGR
@@ -1208,7 +1203,7 @@ static void pmgr_base_reg_write(void *opaque, hwaddr addr, uint64_t data,
         }
 
         DPRINTF("SEP PMGR_BASE: PowerState %s write after at 0x" HWADDR_FMT_plx
-                " with value 0x%" PRIx64 "\n",
+                " with value 0x%" PRIX64 "\n",
                 sepos_powerstate_name(addr), addr, data);
         goto jump_default;
     case 0x8000:
@@ -1220,14 +1215,14 @@ static void pmgr_base_reg_write(void *opaque, hwaddr addr, uint64_t data,
             s->pmgr_fuse_changer_bit1_was_set = true;
         }
         DPRINTF("SEP PMGR_BASE: fuse change write at 0x" HWADDR_FMT_plx
-                " with value 0x%" PRIx64 "\n",
+                " with value 0x%" PRIX64 "\n",
                 addr, data);
         goto jump_default;
     default:
 #if 1
         qemu_log_mask(LOG_UNIMP,
                       "SEP PMGR_BASE: Unknown write at 0x" HWADDR_FMT_plx
-                      " with value 0x%" PRIx64 "\n",
+                      " with value 0x%" PRIX64 "\n",
                       addr, data);
 #endif
     jump_default:
@@ -1255,7 +1250,7 @@ static uint64_t pmgr_base_reg_read(void *opaque, hwaddr addr, unsigned size)
     case 0x68: // mod_SEPD
 #if 1
         DPRINTF("SEP PMGR_BASE: PowerState %s read at 0x" HWADDR_FMT_plx
-                " with value 0x%" PRIx64 "\n",
+                " with value 0x%" PRIX64 "\n",
                 sepos_powerstate_name(addr), addr, ret);
 #endif
         break;
@@ -1269,7 +1264,7 @@ static uint64_t pmgr_base_reg_read(void *opaque, hwaddr addr, unsigned size)
 #if 1
         qemu_log_mask(LOG_UNIMP,
                       "SEP PMGR_BASE: Unknown read at 0x" HWADDR_FMT_plx
-                      " with value 0x%" PRIx64 "\n",
+                      " with value 0x%" PRIX64 "\n",
                       addr, ret);
 #endif
         break;
@@ -1317,12 +1312,12 @@ static void key_base_reg_write(void *opaque, hwaddr addr, uint64_t data,
         0x40: second 0x40 bytes of random data cmd7_0x7
         */
         DPRINTF("SEP KEY_BASE: Offset 0x" HWADDR_FMT_plx
-                ": Execute Command/Storage Index: cmd 0x%" PRIx64 "\n",
+                ": Execute Command/Storage Index: cmd 0x%" PRIX64 "\n",
                 addr, data);
         goto jump_default;
     case 0x308 ... 0x344: // 0x40 bytes of output from TRNG
         DPRINTF("SEP KEY_BASE: Offset 0x" HWADDR_FMT_plx
-                ": Input: cmd 0x%" PRIx64 "\n",
+                ": Input: cmd 0x%" PRIX64 "\n",
                 addr, data);
         goto jump_default;
     default:
@@ -1330,7 +1325,7 @@ static void key_base_reg_write(void *opaque, hwaddr addr, uint64_t data,
         memcpy(&s->key_base_regs[addr], &data, size);
         qemu_log_mask(LOG_UNIMP,
                       "SEP KEY_BASE: Unknown write at 0x" HWADDR_FMT_plx
-                      " with value 0x%" PRIx64 "\n",
+                      " with value 0x%" PRIX64 "\n",
                       addr, data);
         break;
     }
@@ -1401,7 +1396,7 @@ static void key_fcfg_reg_write(void *opaque, hwaddr addr, uint64_t data,
 #if 0
         DPRINTF(
                       "SEP KEY_FCFG: TEST0 0x" HWADDR_FMT_plx
-                      " with value 0x%" PRIx64 "\n",
+                      " with value 0x%" PRIX64 "\n",
                       addr, data);
 #endif
             // CPUState *cs = CPU(s->cpu);
@@ -1416,7 +1411,7 @@ static void key_fcfg_reg_write(void *opaque, hwaddr addr, uint64_t data,
 #if 0
         DPRINTF(
                       "SEP KEY_FCFG: TEST1 0x" HWADDR_FMT_plx
-                      " with value 0x%" PRIx64 "\n",
+                      " with value 0x%" PRIX64 "\n",
                       addr, data);
 #endif
             // CPUState *cs = CPU(s->cpu);
@@ -1433,7 +1428,7 @@ static void key_fcfg_reg_write(void *opaque, hwaddr addr, uint64_t data,
         }
         goto jump_default;
     case 0x14:
-        DPRINTF("SEP KEY_FCFG: vals 0x" HWADDR_FMT_plx " with value 0x%" PRIx64
+        DPRINTF("SEP KEY_FCFG: vals 0x" HWADDR_FMT_plx " with value 0x%" PRIX64
                 "\n",
                 addr, data);
         if (data == 0xffff) {
@@ -1454,7 +1449,7 @@ static void key_fcfg_reg_write(void *opaque, hwaddr addr, uint64_t data,
 #if 0
         DPRINTF(
                       "SEP KEY_FCFG: Unknown write at 0x" HWADDR_FMT_plx
-                      " with value 0x%" PRIx64 "\n",
+                      " with value 0x%" PRIX64 "\n",
                       addr, data);
 #endif
         break;
@@ -1487,20 +1482,20 @@ static uint64_t key_fcfg_reg_read(void *opaque, hwaddr addr, unsigned size)
         ret = ((uint32_t)key_fcfg_offset_0x14_index << 16) |
               s->key_fcfg_offset_0x14_values[key_fcfg_offset_0x14_index];
         DPRINTF("SEP KEY_FCFG: vals read at 0x" HWADDR_FMT_plx
-                " ret: 0x%" PRIx64 "\n",
+                " ret: 0x%" PRIX64 "\n",
                 addr, ret);
         break;
     case 0x18: // for SKG ; 0x4 | (value & 0x3)
         // ret = 0x4 | 0x0; // when AMK is disabled
         ret = 0x4 | 0x1; // when AMK is enabled
-        DPRINTF("SEP KEY_FCFG: AMK read at 0x" HWADDR_FMT_plx " ret: 0x%" PRIx64
+        DPRINTF("SEP KEY_FCFG: AMK read at 0x" HWADDR_FMT_plx " ret: 0x%" PRIX64
                 "\n",
                 addr, ret);
         break;
     default:
         memcpy(&ret, &s->key_fcfg_regs[addr], size);
         DPRINTF("SEP KEY_FCFG: Unknown read at 0x" HWADDR_FMT_plx
-                " ret: 0x%" PRIx64 "\n",
+                " ret: 0x%" PRIX64 "\n",
                 addr, ret);
         break;
     }
@@ -1533,7 +1528,7 @@ static void moni_base_reg_write(void *opaque, hwaddr addr, uint64_t data,
         memcpy(&s->moni_base_regs[addr], &data, size);
         qemu_log_mask(LOG_UNIMP,
                       "SEP MONI_BASE: Unknown write at 0x" HWADDR_FMT_plx
-                      " with value 0x%" PRIx64 "\n",
+                      " with value 0x%" PRIX64 "\n",
                       addr, data);
         break;
     }
@@ -1584,7 +1579,7 @@ static void moni_thrm_reg_write(void *opaque, hwaddr addr, uint64_t data,
         memcpy(&s->moni_thrm_regs[addr], &data, size);
         qemu_log_mask(LOG_UNIMP,
                       "SEP MONI_THRM: Unknown write at 0x" HWADDR_FMT_plx
-                      " with value 0x%" PRIx64 "\n",
+                      " with value 0x%" PRIX64 "\n",
                       addr, data);
         break;
     }
@@ -1635,7 +1630,7 @@ static void eisp_base_reg_write(void *opaque, hwaddr addr, uint64_t data,
         memcpy(&s->eisp_base_regs[addr], &data, size);
         qemu_log_mask(LOG_UNIMP,
                       "SEP EISP_BASE: Unknown write at 0x" HWADDR_FMT_plx
-                      " with value 0x%" PRIx64 "\n",
+                      " with value 0x%" PRIX64 "\n",
                       addr, data);
         break;
     }
@@ -1692,7 +1687,7 @@ static void eisp_hmac_reg_write(void *opaque, hwaddr addr, uint64_t data,
         memcpy(&s->eisp_hmac_regs[addr], &data, size);
         qemu_log_mask(LOG_UNIMP,
                       "SEP EISP_HMAC: Unknown write at 0x" HWADDR_FMT_plx
-                      " with value 0x%" PRIx64 "\n",
+                      " with value 0x%" PRIX64 "\n",
                       addr, data);
         break;
     }
@@ -1961,8 +1956,8 @@ static void aess_handle_cmd(AppleAESSState *s)
         // aess_keywrap_uid(s, key_wrap_data_in, key_wrap_data_out, cipher_alg,
         // true);
         aess_keywrap_uid(s, key_wrap_data_in, key_wrap_data_out, cipher_alg);
-        // qcrypto_random_bytes(key_wrap_data_out, sizeof(key_wrap_data_out),
-        // NULL); // For testing if random output breaks stuff.
+        // qemu_guest_getrandom_nofail(key_wrap_data_out, sizeof(
+        // key_wrap_data_out)); // For testing if random output breaks stuff.
         memcpy(s->out_full, key_wrap_data_out, key_len);
 #endif
     }
@@ -2078,7 +2073,7 @@ static void aess_handle_cmd(AppleAESSState *s)
             /// s->reg_0x18_keydisable, 0x8/4);
             // NOT AFFECTED by REG_0x18???
             s->keywrap_uid0_enabled = true;
-            DPRINTF("SEP AESS_BASE: %s: Copied seed_bits for uid0 0x%x\n",
+            DPRINTF("SEP AESS_BASE: %s: Copied seed_bits for uid0 0x%X\n",
                     __func__, s->seed_bits);
         }
     }
@@ -2105,7 +2100,7 @@ static void aess_handle_cmd(AppleAESSState *s)
             /// s->reg_0x18_keydisable, 0x8/4);
             // actually affected by reg_0x18?
             s->keywrap_uid1_enabled = true;
-            DPRINTF("SEP AESS_BASE: %s: Copied seed_bits for uid1 0x%x\n",
+            DPRINTF("SEP AESS_BASE: %s: Copied seed_bits for uid1 0x%X\n",
                     __func__, s->seed_bits);
         }
     }
@@ -2234,7 +2229,7 @@ static void aess_base_reg_write(void *opaque, hwaddr addr, uint64_t data,
 #if 0
         qemu_log_mask(LOG_UNIMP,
                       "SEP AESS_BASE: Unknown write at 0x" HWADDR_FMT_plx
-                      " with value 0x%" PRIx64 "\n",
+                      " with value 0x%" PRIX64 "\n",
                       addr, data);
 #endif
         break;
@@ -2308,7 +2303,7 @@ static uint64_t aess_base_reg_read(void *opaque, hwaddr addr, unsigned size)
 #if 0
         qemu_log_mask(LOG_UNIMP,
                       "SEP AESS_BASE: Unknown read at 0x" HWADDR_FMT_plx
-                      " with value 0x%" PRIx64 "\n",
+                      " with value 0x%" PRIX64 "\n",
                       addr, ret);
 #endif
         break;
@@ -2343,7 +2338,7 @@ static void aesh_base_reg_write(void *opaque, hwaddr addr, uint64_t data,
 #if 0
         qemu_log_mask(LOG_UNIMP,
                       "SEP AESH_BASE: Unknown write at 0x" HWADDR_FMT_plx
-                      " with value 0x%" PRIx64 "\n",
+                      " with value 0x%" PRIX64 "\n",
                       addr, data);
 #endif
         break;
@@ -2369,7 +2364,7 @@ static uint64_t aesh_base_reg_read(void *opaque, hwaddr addr, unsigned size)
 #if 0
         qemu_log_mask(LOG_UNIMP,
                       "SEP AESH_BASE: Unknown read at 0x" HWADDR_FMT_plx
-                      " with value 0x%" PRIx64 "\n",
+                      " with value 0x%" PRIX64 "\n",
                       addr, ret);
 #endif
         break;
@@ -2473,7 +2468,7 @@ static void pka_base_reg_write(void *opaque, hwaddr addr, uint64_t data,
 #if 0
         qemu_log_mask(LOG_UNIMP,
                       "SEP PKA_BASE: Unknown write at 0x" HWADDR_FMT_plx
-                      " with value 0x%" PRIx64 "\n",
+                      " with value 0x%" PRIX64 "\n",
                       addr, data);
 #endif
         break;
@@ -2532,7 +2527,7 @@ static uint64_t pka_base_reg_read(void *opaque, hwaddr addr, unsigned size)
 #if 0
         qemu_log_mask(LOG_UNIMP,
                       "SEP PKA_BASE: Unknown read at 0x" HWADDR_FMT_plx
-                      " with value 0x%" PRIx64 "\n",
+                      " with value 0x%" PRIX64 "\n",
                       addr, ret);
 #endif
         break;
@@ -2570,7 +2565,7 @@ static void pka_tmm_reg_write(void *opaque, hwaddr addr, uint64_t data,
 #if 0
         qemu_log_mask(LOG_UNIMP,
                       "SEP PKA_TMM: Unknown write at 0x" HWADDR_FMT_plx
-                      " with value 0x%" PRIx64 "\n",
+                      " with value 0x%" PRIX64 "\n",
                       addr, data);
 #endif
         break;
@@ -2595,7 +2590,7 @@ static uint64_t pka_tmm_reg_read(void *opaque, hwaddr addr, unsigned size)
 #if 0
         qemu_log_mask(LOG_UNIMP,
                       "SEP PKA_TMM: Unknown read at 0x" HWADDR_FMT_plx
-                      " with value 0x%" PRIx64 "\n",
+                      " with value 0x%" PRIX64 "\n",
                       addr, ret);
 #endif
         break;
@@ -2629,7 +2624,7 @@ static void misc2_reg_write(void *opaque, hwaddr addr, uint64_t data,
         memcpy(&s->misc2_regs[addr], &data, size);
         qemu_log_mask(LOG_UNIMP,
                       "SEP MISC2: Unknown write at 0x" HWADDR_FMT_plx
-                      " with value 0x%" PRIx64 "\n",
+                      " with value 0x%" PRIX64 "\n",
                       addr, data);
         break;
     }
@@ -2698,7 +2693,7 @@ static void boot_monitor_reg_write(void *opaque, hwaddr addr, uint64_t data,
     default:
         qemu_log_mask(LOG_UNIMP,
                       "SEP Boot Monitor: Unknown write at 0x" HWADDR_FMT_plx
-                      " with value 0x%" PRIx64 "\n",
+                      " with value 0x%" PRIX64 "\n",
                       addr, data);
         memcpy(&s->boot_monitor_regs[addr], &data, size);
         break;
@@ -3052,7 +3047,7 @@ static void progress_reg_write(void *opaque, hwaddr addr, uint64_t data,
         }
 #endif
         if (data == 0x41a7 && (s->chip_id >= 0x8015)) {
-            DPRINTF("%s: SEPFW_copy_test0: 0x" HWADDR_FMT_plx " 0x%" PRIx64
+            DPRINTF("%s: SEPFW_copy_test0: 0x" HWADDR_FMT_plx " 0x%" PRIX64
                     "\n",
                     __func__, s->sep_fw_addr, s->sep_fw_size);
             AddressSpace *nsas = &address_space_memory;
@@ -3070,7 +3065,7 @@ static void progress_reg_write(void *opaque, hwaddr addr, uint64_t data,
             if (msg != NULL) {
                 memcpy(&sep_msg, msg->data, sizeof(sep_msg));
                 uint64_t shmbuf_base = (uint64_t)sep_msg.data << 12;
-                DPRINTF("%s: SHMBUF_TEST0: trace_data8:0x%" PRIx64 ": "
+                DPRINTF("%s: SHMBUF_TEST0: trace_data8:0x%" PRIX64 ": "
                         "shmbuf=0x" HWADDR_FMT_plx
                         ": ep=0x%02x, tag=0x%02x, opcode=0x%02x(%u), "
                         "param=0x%02x, data=0x%08x\n",
@@ -3115,7 +3110,7 @@ static void progress_reg_write(void *opaque, hwaddr addr, uint64_t data,
     case 0x0:
         memcpy(&s->progress_regs[addr], &data, size);
         DPRINTF("SEP Progress: Progress_0 write at 0x" HWADDR_FMT_plx
-                " with value 0x%" PRIx64 "\n",
+                " with value 0x%" PRIX64 "\n",
                 addr, data);
         if (data == 0xDEADBEE0) {
             qemu_irq_lower(qdev_get_gpio_in(DEVICE(s->cpu), ARM_CPU_IRQ));
@@ -3167,7 +3162,7 @@ static void progress_reg_write(void *opaque, hwaddr addr, uint64_t data,
     case 0x3370:
         memcpy(&s->progress_regs[addr], &data, size);
         DPRINTF("SEP Progress: Progress_1 write at 0x" HWADDR_FMT_plx
-                " with value 0x%" PRIx64 "\n",
+                " with value 0x%" PRIX64 "\n",
                 addr, data);
         // apple_mbox_set_custom0(s->mbox, data);
         apple_a7iop_interrupt_status_push(APPLE_A7IOP(s)->iop_mailbox, data);
@@ -3196,7 +3191,7 @@ static void progress_reg_write(void *opaque, hwaddr addr, uint64_t data,
 #if 0
         qemu_log_mask(LOG_UNIMP,
                       "SEP Progress: Unknown write at 0x" HWADDR_FMT_plx
-                      " with value 0x%" PRIx64 "\n",
+                      " with value 0x%" PRIX64 "\n",
                       addr, data);
 #endif
         break;
@@ -3239,9 +3234,10 @@ static const MemoryRegionOps progress_reg_ops = {
 static void apple_sep_cpu_moni_jump(CPUState *cpu, run_on_cpu_data data)
 {
     vaddr load_addr = data.target_ptr;
-    DPRINTF("%s: before cpu_set_pc: base=0x" HWADDR_FMT_plx "\n", __func__,
+    DPRINTF("%s: before cpu_set_pc: base=0x%" VADDR_PRIX "\n", __func__,
             load_addr);
     cpu_set_pc(cpu, load_addr);
+    tb_flush(cpu); // possible workaround for intermittent sep boot errors
 }
 
 static void apple_sep_iop_start(AppleA7IOP *s)
@@ -3497,10 +3493,9 @@ static void apple_sep_cpu_reset_work(CPUState *cpu, run_on_cpu_data data)
 {
     AppleSEPState *s = data.host_ptr;
     cpu_reset(cpu);
-    DPRINTF(
-        "apple_sep_cpu_reset_work: before cpu_set_pc: base=0x" HWADDR_FMT_plx
-        "\n",
-        s->base);
+    DPRINTF("apple_sep_cpu_reset_work: before cpu_set_pc: base=0x%" VADDR_PRIX
+            "\n",
+            s->base);
     cpu_set_pc(cpu, s->base);
 }
 
@@ -3846,25 +3841,37 @@ static int kbkdf_generate_key(uint8_t *cmac_key, uint8_t *label,
     return 0;
 }
 
+// TODO: use fully random value if priv == NULL
 static int generate_ec_priv(const char *priv, struct ecc_scalar *ecc_key,
                             struct ecc_point *ecc_pub)
 {
-    // TODO: use fully random value if priv == NULL
     const struct ecc_curve *ecc = nettle_get_secp_384r1();
     mpz_t temp1;
+    uint8_t rand_bytes[BYTELEN_384] = {0};
 
     ecc_point_init(ecc_pub, ecc);
     ecc_scalar_init(ecc_key, ecc);
 
-    mpz_init_set_str(temp1, priv, 16);
+    if (priv == NULL) {
+        qemu_guest_getrandom_nofail(rand_bytes, sizeof(rand_bytes));
+        mpz_import(temp1, sizeof(rand_bytes), 1, 1, 1, 0, rand_bytes);
+        // mpz_export to read it back, just to make sure
+#ifdef SEP_DEBUG
+        mpz_export(&rand_bytes, NULL, 1, 1, 1, 0, temp1);
+#endif
+        HEXDUMP("generate_ec_priv: rand_bytes", &rand_bytes, sizeof(rand_bytes));
+    } else {
+        mpz_init_set_str(temp1, priv, 16);
+    }
     mpz_add_ui(temp1, temp1, 1);
-    g_assert_cmpuint(ecc_scalar_set(ecc_key, temp1), !=, 0);
+
+    if (ecc_scalar_set(ecc_key, temp1) == 0) {
+        mpz_clear(temp1);
+        return -1;
+    }
+
     mpz_clear(temp1);
-
     ecc_point_mul_g(ecc_pub, ecc_key);
-
-    // ecc_scalar_clear (ecc_key);
-    // ecc_point_clear (ecc_pub);
 
     return 0;
 }
@@ -3895,8 +3902,8 @@ static int input_ec_pub(struct ecc_point *ecc_pub, uint8_t *pub_xy)
     HEXDUMP("input_ec_pub: pub_x", &pub_xy[0x00], BYTELEN_384);
     HEXDUMP("input_ec_pub: pub_y", &pub_xy[0x00 + BYTELEN_384], BYTELEN_384);
     mpz_inits(temp1, temp2, NULL);
-    mpz_import(temp1, SECP384_PUBLIC_SIZE, 1, 1, 1, 0, &pub_xy[0x00]);
-    mpz_import(temp2, SECP384_PUBLIC_SIZE, 1, 1, 1, 0,
+    mpz_import(temp1, BYTELEN_384, 1, 1, 1, 0, &pub_xy[0x00]);
+    mpz_import(temp2, BYTELEN_384, 1, 1, 1, 0,
                &pub_xy[0x00 + BYTELEN_384]);
     ecc_point_init(ecc_pub, ecc);
     ret = ecc_point_set(ecc_pub, temp1, temp2);
@@ -3931,7 +3938,7 @@ static int generate_kbkdf_keys(struct AppleSSCState *ssc_state,
     struct hmac_sha256_ctx ctx;
     hmac_sha256_set_key(&ctx, SHA256_DIGEST_SIZE, hmac_key);
     // only the first half is the shared_key
-    hmac_sha256_update(&ctx, SECP384_PUBLIC_SIZE, shared_key_xy);
+    hmac_sha256_update(&ctx, BYTELEN_384, shared_key_xy);
     hmac_sha256_digest(&ctx, SHA256_DIGEST_SIZE, derived_key);
     HEXDUMP("generate_kbkdf_keys: derived_key", derived_key,
             SHA256_DIGEST_SIZE);
@@ -4009,8 +4016,8 @@ static void clear_ecc_scalar(struct ecc_scalar *ecc_key)
 // TODO: Properly handle various error cases with cmd 0x0/0x1/..., like wrong
 // hashes/signatures/parameters or public keys not being on the curve.
 
-static int answer_cmd_0x0_init1(struct AppleSSCState *ssc_state,
-                                uint8_t *request, uint8_t *response)
+static void answer_cmd_0x0_init1(struct AppleSSCState *ssc_state,
+                                 uint8_t *request, uint8_t *response)
 {
     DPRINTF("%s: entered function\n", __func__);
     struct ecc_point cmd0_ecpub, ecc_pub;
@@ -4018,38 +4025,35 @@ static int answer_cmd_0x0_init1(struct AppleSSCState *ssc_state,
     struct dsa_signature signature;
     uint8_t digest[BYTELEN_384] = { 0 };
     uint8_t kbkdf_index = 0; // hardcoded
-    char priv_str[0x60 + 1] = { 0 };
+    struct sha384_ctx ctx;
 
     knuth_lfib_init(&rctx, 4711);
     dsa_signature_init(&signature);
 
     if (is_keyslot_valid(ssc_state, kbkdf_index)) { // shouldn't already exist
-        DPRINTF("%s: invalid kbkdf_index: %u\n", __func__, kbkdf_index);
+        qemu_log_mask(LOG_GUEST_ERROR, "%s: invalid kbkdf_index: %u\n",
+                      __func__, kbkdf_index);
         do_response_prefix(request, response,
                            SSC_RESPONSE_FLAG_KEYSLOT_INVALID);
-        return 0;
+        return;
     }
     if (input_ec_pub(&cmd0_ecpub,
                      &request[MSG_PREFIX_LENGTH + SHA256_DIGEST_SIZE]) ==
         0) { // curve is invalid
-        DPRINTF("%s: invalid curve\n", __func__);
+        qemu_log_mask(LOG_GUEST_ERROR, "%s: invalid curve\n", __func__);
         do_response_prefix(request, response, SSC_RESPONSE_FLAG_CURVE_INVALID);
-        goto jump_ret;
+        goto jump_ret1;
     }
     do_response_prefix(request, response, SSC_RESPONSE_FLAG_OK);
-    snprintf(
-        priv_str, sizeof(priv_str),
-        "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
-        "dddddddddddddddddddddddddddd%02x",
-        kbkdf_index);
-    // TODO: use priv_str = NULL here after the function has been reworked
-    // TODO: ASAN might show a (spurious?) __gmp_default_allocate leak here.
-    // already fixed?
-    int err =
-        generate_ec_priv(priv_str, &ssc_state->ecc_keys[kbkdf_index], &ecc_pub);
+    if (generate_ec_priv(NULL, &ssc_state->ecc_keys[kbkdf_index],
+                         &ecc_pub) != 0) {
+        qemu_log_mask(LOG_GUEST_ERROR, "%s: generate_ec_priv failed\n",
+                      __func__);
+        do_response_prefix(request, response, SSC_RESPONSE_FLAG_CURVE_INVALID);
+        goto jump_ret0;
+    }
     output_ec_pub(&ecc_pub,
                   &response[MSG_PREFIX_LENGTH + SECP384_PUBLIC_XY_SIZE]);
-    ecc_point_clear(&ecc_pub);
     memcpy(ssc_state->random_hmac_key, &request[MSG_PREFIX_LENGTH],
            SHA256_DIGEST_SIZE);
     DPRINTF("INFOSTR_AKE_SESSIONSEED: %s\n", INFOSTR_AKE_SESSIONSEED);
@@ -4057,7 +4061,6 @@ static int answer_cmd_0x0_init1(struct AppleSSCState *ssc_state,
                         &cmd0_ecpub, ssc_state->random_hmac_key,
                         INFOSTR_AKE_SESSIONSEED, request, kbkdf_index);
 
-    struct sha384_ctx ctx;
     sha384_init(&ctx);
     sha384_update(&ctx, MSG_PREFIX_LENGTH, &response[0x00]); // prefix
     sha384_update(
@@ -4077,22 +4080,22 @@ static int answer_cmd_0x0_init1(struct AppleSSCState *ssc_state,
                &signature);
     mpz_export(&response[MSG_PREFIX_LENGTH + 0x00 + 0x00], NULL, 1, 1, 1, 0,
                signature.r);
-    mpz_export(&response[MSG_PREFIX_LENGTH + 0x00 + SECP384_PUBLIC_SIZE], NULL,
+    mpz_export(&response[MSG_PREFIX_LENGTH + 0x00 + BYTELEN_384], NULL,
                1, 1, 1, 0, signature.s);
     dsa_signature_clear(&signature);
-jump_ret:
+jump_ret0:
+    ecc_point_clear(&ecc_pub);
+jump_ret1:
     ecc_point_clear(&cmd0_ecpub);
-    return 0;
 }
 
-static int answer_cmd_0x1_connect_sp(struct AppleSSCState *ssc_state,
-                                     uint8_t *request, uint8_t *response)
+static void answer_cmd_0x1_connect_sp(struct AppleSSCState *ssc_state,
+                                      uint8_t *request, uint8_t *response)
 {
     DPRINTF("%s: entered function\n", __func__);
     HEXDUMP("cmd_0x01_req", request, SSC_REQUEST_SIZE_CMD_0x1);
     struct ecc_point cmd1_ecpub, ecc_pub;
     uint8_t kbkdf_index = request[1];
-    char priv_str[0x60 + 1] = { 0 };
 
     uint8_t *cmac_req_should = &request[MSG_PREFIX_LENGTH];
     uint8_t *sw_public_xy2 = &request[MSG_PREFIX_LENGTH + AES_BLOCK_SIZE];
@@ -4107,27 +4110,26 @@ static int answer_cmd_0x1_connect_sp(struct AppleSSCState *ssc_state,
         DPRINTF("%s: kbkdf_index over limit: %u\n", __func__, kbkdf_index);
         do_response_prefix(request, response,
                            SSC_RESPONSE_FLAG_COMMAND_OR_FIELD_INVALID);
-        return 0;
+        return;
     }
     if (is_keyslot_valid(ssc_state, kbkdf_index)) { // shouldn't already exist
         DPRINTF("%s: invalid kbkdf_index: %u\n", __func__, kbkdf_index);
         do_response_prefix(request, response,
                            SSC_RESPONSE_FLAG_KEYSLOT_INVALID);
-        return 0;
+        return;
     }
     if (input_ec_pub(&cmd1_ecpub, sw_public_xy2) == 0) { // curve is invalid
         DPRINTF("%s: invalid curve\n", __func__);
         do_response_prefix(request, response, SSC_RESPONSE_FLAG_CURVE_INVALID);
         goto jump_ret1;
     }
-    snprintf(
-        priv_str, sizeof(priv_str),
-        "999999999999999999999999999999999999999999999999999999999999999999"
-        "9999999999999999999999999999%02x",
-        kbkdf_index);
-    // TODO: use priv_str = NULL here after the function has been reworked
-    int err =
-        generate_ec_priv(priv_str, &ssc_state->ecc_keys[kbkdf_index], &ecc_pub);
+    if (generate_ec_priv(NULL, &ssc_state->ecc_keys[kbkdf_index],
+                         &ecc_pub) != 0) {
+        qemu_log_mask(LOG_GUEST_ERROR, "%s: generate_ec_priv failed\n",
+                      __func__);
+        do_response_prefix(request, response, SSC_RESPONSE_FLAG_CURVE_INVALID);
+        goto jump_ret0;
+    }
     uint8_t aes_key_mackey_req[0x20] = { 0 };
     uint8_t aes_key_extractorkey_req[0x20] = { 0 };
     aes_keys_from_sp_key(ssc_state, kbkdf_index, request, aes_key_mackey_req,
@@ -4162,11 +4164,10 @@ jump_ret0:
     ecc_point_clear(&ecc_pub);
 jump_ret1:
     ecc_point_clear(&cmd1_ecpub);
-    return 0;
 }
 
-static int answer_cmd_0x2_disconnect_sp(struct AppleSSCState *ssc_state,
-                                        uint8_t *request, uint8_t *response)
+static void answer_cmd_0x2_disconnect_sp(struct AppleSSCState *ssc_state,
+                                         uint8_t *request, uint8_t *response)
 {
     DPRINTF("%s: entered function\n", __func__);
     HEXDUMP("cmd_0x02_req", request, SSC_REQUEST_SIZE_CMD_0x2);
@@ -4175,7 +4176,7 @@ static int answer_cmd_0x2_disconnect_sp(struct AppleSSCState *ssc_state,
         DPRINTF("%s: invalid kbkdf_index: %u\n", __func__, kbkdf_index);
         do_response_prefix(request, response,
                            SSC_RESPONSE_FLAG_KEYSLOT_INVALID);
-        return 0;
+        return;
     }
     do_response_prefix(request, response, SSC_RESPONSE_FLAG_OK);
     clear_ecc_scalar(&ssc_state->ecc_keys[kbkdf_index]);
@@ -4183,11 +4184,10 @@ static int answer_cmd_0x2_disconnect_sp(struct AppleSSCState *ssc_state,
            sizeof(ssc_state->kbkdf_keys[kbkdf_index]));
     ssc_state->kbkdf_counter[kbkdf_index] = 0;
     DPRINTF("answer_cmd_0x2_disconnect_sp: kbkdf_index: %u\n", kbkdf_index);
-    return 0;
 }
 
-static int answer_cmd_0x3_metadata_write(struct AppleSSCState *ssc_state,
-                                         uint8_t *request, uint8_t *response)
+static void answer_cmd_0x3_metadata_write(struct AppleSSCState *ssc_state,
+                                          uint8_t *request, uint8_t *response)
 {
     DPRINTF("%s: entered function\n", __func__);
     HEXDUMP("cmd_0x03_req", request, SSC_REQUEST_SIZE_CMD_0x3);
@@ -4202,14 +4202,14 @@ static int answer_cmd_0x3_metadata_write(struct AppleSSCState *ssc_state,
         DPRINTF("%s: invalid copy: %u\n", __func__, copy);
         do_response_prefix(request, response,
                            SSC_RESPONSE_FLAG_COMMAND_OR_FIELD_INVALID);
-        return 0;
+        return;
     }
     if (kbkdf_index_key >= KBKDF_KEY_MAX_SLOTS ||
         !is_keyslot_valid(ssc_state, kbkdf_index_key)) {
         DPRINTF("%s: invalid kbkdf_index_key: %u\n", __func__, kbkdf_index_key);
         do_response_prefix(request, response,
                            SSC_RESPONSE_FLAG_KEYSLOT_INVALID);
-        return 0;
+        return;
     }
     if (kbkdf_index_dataslot == 0 ||
         kbkdf_index_dataslot >= KBKDF_KEY_MAX_SLOTS) {
@@ -4217,7 +4217,7 @@ static int answer_cmd_0x3_metadata_write(struct AppleSSCState *ssc_state,
                 kbkdf_index_dataslot);
         do_response_prefix(request, response,
                            SSC_RESPONSE_FLAG_KEYSLOT_INVALID);
-        return 0;
+        return;
     }
     int blk_offset = (kbkdf_index_dataslot * CMD_METADATA_DATA_PAYLOAD_LENGTH *
                       SSC_REQUEST_MAX_COPIES) +
@@ -4226,7 +4226,7 @@ static int answer_cmd_0x3_metadata_write(struct AppleSSCState *ssc_state,
         (KBKDF_KEY_KEY_FILE_OFFSET * CMD_METADATA_DATA_PAYLOAD_LENGTH *
          SSC_REQUEST_MAX_COPIES) +
         (kbkdf_index_dataslot * KBKDF_KEY_KEY_LENGTH);
-    DPRINTF("cmd_0x03_req: blk_offset: 0x%x\n", blk_offset);
+    DPRINTF("cmd_0x03_req: blk_offset: 0x%X\n", blk_offset);
     HEXDUMP("cmd_0x03_req: ssc_state->kbkdf_keys[kbkdf_index_key]",
             ssc_state->kbkdf_keys[kbkdf_index_key], KBKDF_CMAC_OUTPUT_LEN);
 
@@ -4237,7 +4237,7 @@ static int answer_cmd_0x3_metadata_write(struct AppleSSCState *ssc_state,
     if (err0 == 0) {
         DPRINTF("%s: invalid CMAC\n", __func__);
         do_response_prefix(request, response, SSC_RESPONSE_FLAG_CMAC_INVALID);
-        return 0;
+        return;
     }
     do_response_prefix(request, response, SSC_RESPONSE_FLAG_OK);
     HEXDUMP("cmd_0x03_req: req_dec_out", req_dec_out,
@@ -4263,13 +4263,11 @@ static int answer_cmd_0x3_metadata_write(struct AppleSSCState *ssc_state,
         aes_ccm_crypt(ssc_state, kbkdf_index_key, &response[0x00], 0x0,
                       resp_nop_out, &response[MSG_PREFIX_LENGTH], true, true);
     HEXDUMP("cmd_0x03_resp", response, SSC_RESPONSE_SIZE_CMD_0x3);
-
-    return 0;
 }
 
-static int answer_cmd_0x4_metadata_data_read(struct AppleSSCState *ssc_state,
-                                             uint8_t *request,
-                                             uint8_t *response)
+static void answer_cmd_0x4_metadata_data_read(struct AppleSSCState *ssc_state,
+                                              uint8_t *request,
+                                              uint8_t *response)
 {
     DPRINTF("%s: entered function\n", __func__);
     HEXDUMP("cmd_0x04_req", request, SSC_REQUEST_SIZE_CMD_0x4);
@@ -4281,19 +4279,19 @@ static int answer_cmd_0x4_metadata_data_read(struct AppleSSCState *ssc_state,
         DPRINTF("%s: invalid copy: %u\n", __func__, copy);
         do_response_prefix(request, response,
                            SSC_RESPONSE_FLAG_COMMAND_OR_FIELD_INVALID);
-        return 0;
+        return;
     }
     if (kbkdf_index == 0 || kbkdf_index >= KBKDF_KEY_MAX_SLOTS ||
         !is_keyslot_valid(ssc_state, kbkdf_index)) {
         DPRINTF("%s: invalid kbkdf_index: %u\n", __func__, kbkdf_index);
         do_response_prefix(request, response,
                            SSC_RESPONSE_FLAG_KEYSLOT_INVALID);
-        return 0;
+        return;
     }
     int blk_offset = (kbkdf_index * CMD_METADATA_DATA_PAYLOAD_LENGTH *
                       SSC_REQUEST_MAX_COPIES) +
                      (copy * CMD_METADATA_DATA_PAYLOAD_LENGTH);
-    DPRINTF("cmd_0x04_req: blk_offset: 0x%x\n", blk_offset);
+    DPRINTF("cmd_0x04_req: blk_offset: 0x%X\n", blk_offset);
     HEXDUMP("cmd_0x04_req: ssc_state->kbkdf_keys[kbkdf_index]",
             ssc_state->kbkdf_keys[kbkdf_index], KBKDF_CMAC_OUTPUT_LEN);
 
@@ -4304,7 +4302,7 @@ static int answer_cmd_0x4_metadata_data_read(struct AppleSSCState *ssc_state,
     if (err0 == 0) {
         DPRINTF("%s: invalid CMAC\n", __func__);
         do_response_prefix(request, response, SSC_RESPONSE_FLAG_CMAC_INVALID);
-        return 0;
+        return;
     }
     do_response_prefix(request, response, SSC_RESPONSE_FLAG_OK);
     HEXDUMP("cmd_0x04_req: req_nop_out", req_nop_out, 1);
@@ -4319,13 +4317,11 @@ static int answer_cmd_0x4_metadata_data_read(struct AppleSSCState *ssc_state,
                              CMD_METADATA_DATA_PAYLOAD_LENGTH, resp_dec_out,
                              &response[MSG_PREFIX_LENGTH], true, true);
     HEXDUMP("cmd_0x04_resp", response, SSC_RESPONSE_SIZE_CMD_0x4);
-
-    return 0;
 }
 
-static int answer_cmd_0x5_metadata_data_write(struct AppleSSCState *ssc_state,
-                                              uint8_t *request,
-                                              uint8_t *response)
+static void answer_cmd_0x5_metadata_data_write(struct AppleSSCState *ssc_state,
+                                               uint8_t *request,
+                                               uint8_t *response)
 {
     DPRINTF("%s: entered function\n", __func__);
     HEXDUMP("cmd_0x05_req", request, SSC_REQUEST_SIZE_CMD_0x5);
@@ -4337,19 +4333,19 @@ static int answer_cmd_0x5_metadata_data_write(struct AppleSSCState *ssc_state,
         DPRINTF("%s: invalid copy: %u\n", __func__, copy);
         do_response_prefix(request, response,
                            SSC_RESPONSE_FLAG_COMMAND_OR_FIELD_INVALID);
-        return 0;
+        return;
     }
     if (kbkdf_index == 0 || kbkdf_index >= KBKDF_KEY_MAX_SLOTS ||
         !is_keyslot_valid(ssc_state, kbkdf_index)) {
         DPRINTF("%s: invalid kbkdf_index: %u\n", __func__, kbkdf_index);
         do_response_prefix(request, response,
                            SSC_RESPONSE_FLAG_KEYSLOT_INVALID);
-        return 0;
+        return;
     }
     int blk_offset = (kbkdf_index * CMD_METADATA_DATA_PAYLOAD_LENGTH *
                       SSC_REQUEST_MAX_COPIES) +
                      (copy * CMD_METADATA_DATA_PAYLOAD_LENGTH);
-    DPRINTF("cmd_0x05_req: blk_offset: 0x%x\n", blk_offset);
+    DPRINTF("cmd_0x05_req: blk_offset: 0x%X\n", blk_offset);
     HEXDUMP("cmd_0x05_req: ssc_state->kbkdf_keys[kbkdf_index]",
             ssc_state->kbkdf_keys[kbkdf_index], KBKDF_CMAC_OUTPUT_LEN);
 
@@ -4361,7 +4357,7 @@ static int answer_cmd_0x5_metadata_data_write(struct AppleSSCState *ssc_state,
     if (err0 == 0) {
         DPRINTF("%s: invalid CMAC\n", __func__);
         do_response_prefix(request, response, SSC_RESPONSE_FLAG_CMAC_INVALID);
-        return 0;
+        return;
     }
     do_response_prefix(request, response, SSC_RESPONSE_FLAG_OK);
     HEXDUMP("cmd_0x05_req: req_dec_out", req_dec_out,
@@ -4376,12 +4372,10 @@ static int answer_cmd_0x5_metadata_data_write(struct AppleSSCState *ssc_state,
         aes_ccm_crypt(ssc_state, kbkdf_index, &response[0x00], 0x0,
                       resp_nop_out, &response[MSG_PREFIX_LENGTH], true, true);
     HEXDUMP("cmd_0x05_resp", response, SSC_RESPONSE_SIZE_CMD_0x5);
-
-    return 0;
 }
 
-static int answer_cmd_0x6_metadata_read(struct AppleSSCState *ssc_state,
-                                        uint8_t *request, uint8_t *response)
+static void answer_cmd_0x6_metadata_read(struct AppleSSCState *ssc_state,
+                                         uint8_t *request, uint8_t *response)
 {
     DPRINTF("%s: entered function\n", __func__);
     HEXDUMP("cmd_0x06_req", request, SSC_REQUEST_SIZE_CMD_0x6);
@@ -4396,14 +4390,14 @@ static int answer_cmd_0x6_metadata_read(struct AppleSSCState *ssc_state,
         DPRINTF("%s: invalid copy: %u\n", __func__, copy);
         do_response_prefix(request, response,
                            SSC_RESPONSE_FLAG_COMMAND_OR_FIELD_INVALID);
-        return 0;
+        return;
     }
     if (kbkdf_index_key >= KBKDF_KEY_MAX_SLOTS ||
         !is_keyslot_valid(ssc_state, kbkdf_index_key)) {
         DPRINTF("%s: invalid kbkdf_index_key: %u\n", __func__, kbkdf_index_key);
         do_response_prefix(request, response,
                            SSC_RESPONSE_FLAG_KEYSLOT_INVALID);
-        return 0;
+        return;
     }
     if (kbkdf_index_dataslot == 0 ||
         kbkdf_index_dataslot >= KBKDF_KEY_MAX_SLOTS) {
@@ -4411,7 +4405,7 @@ static int answer_cmd_0x6_metadata_read(struct AppleSSCState *ssc_state,
                 kbkdf_index_dataslot);
         do_response_prefix(request, response,
                            SSC_RESPONSE_FLAG_KEYSLOT_INVALID);
-        return 0;
+        return;
     }
     int blk_offset = (kbkdf_index_dataslot * CMD_METADATA_DATA_PAYLOAD_LENGTH *
                       SSC_REQUEST_MAX_COPIES) +
@@ -4420,7 +4414,7 @@ static int answer_cmd_0x6_metadata_read(struct AppleSSCState *ssc_state,
         (KBKDF_KEY_KEY_FILE_OFFSET * CMD_METADATA_DATA_PAYLOAD_LENGTH *
          SSC_REQUEST_MAX_COPIES) +
         (kbkdf_index_dataslot * KBKDF_KEY_KEY_LENGTH);
-    DPRINTF("cmd_0x06_req: blk_offset: 0x%x\n", blk_offset);
+    DPRINTF("cmd_0x06_req: blk_offset: 0x%X\n", blk_offset);
     HEXDUMP("cmd_0x06_req: ssc_state->kbkdf_keys[kbkdf_index_key]",
             ssc_state->kbkdf_keys[kbkdf_index_key], KBKDF_CMAC_OUTPUT_LEN);
 
@@ -4431,7 +4425,7 @@ static int answer_cmd_0x6_metadata_read(struct AppleSSCState *ssc_state,
     if (err0 == 0) {
         DPRINTF("%s: invalid CMAC\n", __func__);
         do_response_prefix(request, response, SSC_RESPONSE_FLAG_CMAC_INVALID);
-        return 0;
+        return;
     }
     do_response_prefix(request, response, SSC_RESPONSE_FLAG_OK);
     HEXDUMP("cmd_0x06_req: req_nop_out", req_nop_out, 1);
@@ -4448,19 +4442,24 @@ static int answer_cmd_0x6_metadata_read(struct AppleSSCState *ssc_state,
                              CMD_METADATA_PAYLOAD_LENGTH, resp_dec_out,
                              &response[MSG_PREFIX_LENGTH], true, true);
     HEXDUMP("cmd_0x06_resp", response, SSC_RESPONSE_SIZE_CMD_0x6);
-
-    return 0;
 }
 
-static int answer_cmd_0x7_init0(struct AppleSSCState *ssc_state,
-                                uint8_t *request, uint8_t *response)
+static void answer_cmd_0x7_init0(struct AppleSSCState *ssc_state,
+                                 uint8_t *request, uint8_t *response)
 {
     struct ecc_point ecc_pub;
     DPRINTF("%s: entered function\n", __func__);
 
     const char *priv_str = "cccccccccccccccccccccccccccccccccccccccccccccccc"
                            "cccccccccccccccccccccccccccccccccccccccccccccccc";
-    int err = generate_ec_priv(priv_str, &ssc_state->ecc_key_main, &ecc_pub);
+    // no NULL here, this should stay static
+    if (generate_ec_priv(priv_str, &ssc_state->ecc_key_main,
+                         &ecc_pub) != 0) {
+        qemu_log_mask(LOG_GUEST_ERROR, "%s: generate_ec_priv failed\n",
+                      __func__);
+        do_response_prefix(request, response, SSC_RESPONSE_FLAG_CURVE_INVALID);
+        goto jump_ret;
+    }
     do_response_prefix(request, response, SSC_RESPONSE_FLAG_OK);
     uint8_t unknown0[0x06] = { 0x12, 0x34, 0x56, 0x78, 0x90, 0xab };
     uint8_t cpsn[0x07] = { 0xde, 0xad, 0xbe, 0xef, 0xca, 0xfe, 0xcc };
@@ -4475,23 +4474,23 @@ static int answer_cmd_0x7_init0(struct AppleSSCState *ssc_state,
     output_ec_pub(&ecc_pub,
                   &response[MSG_PREFIX_LENGTH + sizeof(unknown0) +
                             sizeof(ssc_state->cpsn) + sizeof(unknown1)]);
-    ecc_point_clear(&ecc_pub);
 
     HEXDUMP("cmd_0x07_resp", response, SSC_RESPONSE_SIZE_CMD_0x7);
-    return 0;
+
+jump_ret:
+    ecc_point_clear(&ecc_pub);
 }
 
-static int answer_cmd_0x8_sleep(struct AppleSSCState *ssc_state,
-                                uint8_t *request, uint8_t *response)
+static void answer_cmd_0x8_sleep(struct AppleSSCState *ssc_state,
+                                 uint8_t *request, uint8_t *response)
 {
     DPRINTF("%s: entered function\n", __func__);
     do_response_prefix(request, response, SSC_RESPONSE_FLAG_OK);
     HEXDUMP("cmd_0x08_resp", response, SSC_RESPONSE_SIZE_CMD_0x8);
-    return 0;
 }
 
-static int answer_cmd_0x9_panic(struct AppleSSCState *ssc_state,
-                                uint8_t *request, uint8_t *response)
+static void answer_cmd_0x9_panic(struct AppleSSCState *ssc_state,
+                                 uint8_t *request, uint8_t *response)
 {
     DPRINTF("%s: entered function\n", __func__);
     ////apple_ssc_reset(DEVICE(ssc_state));
@@ -4502,7 +4501,6 @@ static int answer_cmd_0x9_panic(struct AppleSSCState *ssc_state,
     memcpy(&response[MSG_PREFIX_LENGTH + 0x24], ssc_state->cpsn,
            sizeof(ssc_state->cpsn));
     HEXDUMP("cmd_0x09_resp", response, SSC_RESPONSE_SIZE_CMD_0x9);
-    return 0;
 }
 
 static uint8_t apple_ssc_rx(I2CSlave *i2c)

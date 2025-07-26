@@ -1,3 +1,23 @@
+/*
+ * Apple A7IOP V4 Registers.
+ *
+ * Copyright (c) 2023-2025 Visual Ehrmanntraut (VisualEhrmanntraut).
+ * Copyright (c) 2023-2025 Christian Inci (chris-pcguy).
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 2.1 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this library; if not, see <http://www.gnu.org/licenses/>.
+ */
+
 #include "qemu/osdep.h"
 #include "exec/hwaddr.h"
 #include "exec/memory.h"
@@ -7,7 +27,6 @@
 #include "qemu/log.h"
 #include "private.h"
 
-#define REG_UNKNOWN_4 (0x4) // SEPROM: BIT0 Maybe a panic signal.
 #define REG_AXI_BASE_LO (0x8)
 #define REG_AXI_BASE_HI (0x10)
 #define REG_AXI_START_LO (0x18)
@@ -16,21 +35,16 @@
 #define REG_AXI_END_HI (0x30)
 #define REG_AXI_CTRL (0x38)
 #define AXI_CTRL_RUN BIT(0)
-#define REG_UNKNOWN_40 (0x40)
 #define REG_CPU_CTRL (0x44)
 #define REG_CPU_STATUS (0x48)
 #define REG_UNKNOWN_4C (0x4C)
 #define REG_KIC_GLB_CFG (0x80C)
 #define KIC_GLB_CFG_TIMER_EN (1 << 1)
-#define REG_UNKNOWN_818 (0x818)
 #define REG_INTERRUPT_STATUS (0x81C) // "akf: READ IRQ %x"
 #define REG_SEP_AKF_DISABLE_INTERRUPT_BASE (0xA00)
 #define REG_SEP_AKF_ENABLE_INTERRUPT_BASE (0xA80)
 #define REG_KIC_MAILBOX_EXT_SET (0xC00)
 #define REG_KIC_MAILBOX_EXT_CLR (0xC04)
-#define REG_UNKNOWN_C14 (0xC14)
-#define REG_UNKNOWN_C10 (0xC10)
-#define REG_UNKNOWN_C18 (0xC18)
 #define REG_IDLE_STATUS (0x8000)
 #define REG_KIC_TMR_CFG1 (0x10000)
 #define KIC_TMR_CFG_FSL_TIMER (0 << 4)
@@ -88,8 +102,6 @@ static void apple_a7iop_reg_write(void *opaque, hwaddr addr,
         break;
     case REG_KIC_MAILBOX_EXT_CLR:
         break;
-    case REG_UNKNOWN_C14:
-        break;
     default:
         qemu_log_mask(LOG_UNIMP,
                       "A7IOP(%s): Unknown write to 0x" HWADDR_FMT_plx
@@ -114,8 +126,6 @@ static uint64_t apple_a7iop_reg_read(void *opaque, hwaddr addr, unsigned size)
         // TODO: response not interrupt available, but something with
         // REG_V3_CPU_CTRL?
         break;
-    case REG_UNKNOWN_818:
-        break;
     case REG_INTERRUPT_STATUS: {
         AppleA7IOPMailbox *a7iop_mbox = s->iop_mailbox;
         uint32_t interrupt_status =
@@ -125,12 +135,6 @@ static uint64_t apple_a7iop_reg_read(void *opaque, hwaddr addr, unsigned size)
             apple_a7iop_mailbox_update_irq_status(a7iop_mbox);
             if (interrupt_status) {
                 ret = interrupt_status;
-#if 0
-                qemu_log_mask(LOG_GUEST_ERROR,
-                              "%s: REG_V3_INTERRUPT_STATUS: returning "
-                              "interrupt_status: 0x%05" PRIX64 "\n",
-                              s->role, ret);
-#endif
             } else if (a7iop_mbox->iop_nonempty) {
                 ret = 0x40000;
             } else if (a7iop_mbox->iop_empty) {
