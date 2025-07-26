@@ -38,7 +38,7 @@ jobs:
         run: |
           mkdir build
           cd build
-          PKG_CONFIG_PATH=/usr/local/lib64/pkgconfig .../configure --target-list=aarch64-softmmu,x86_64-softmmu --enable-lzfse --enable-slirp --enable-capstone --enable-curses --enable-libssh --enable-virtfs --enable-zstd --enable-nettle --enable-gnutls --enable-gtk --enable-sdl --disable-werror
+          PKG_CONFIG_PATH=/usr/local/lib64/pkgconfig ../configure --target-list=aarch64-softmmu,x86_64-softmmu --enable-lzfse --enable-slirp --enable-capstone --enable-curses --enable-libssh --enable-virtfs --enable-zstd --enable-nettle --enable-gnutls --enable-gtk --enable-sdl --disable-werror
           make -j$(nproc)
       - name: Install
         run: |
